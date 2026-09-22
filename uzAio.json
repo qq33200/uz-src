@@ -9,6 +9,26 @@
       "order": "E",
       "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/Hudie_yingyuan.js",
       "type": 100
+    },
+    {
+      "name": "[禁] GetAV",
+      "version": 1,
+      "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选",
+      "webSite": "https://getav.net",
+      "instance": "getav2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/GetAV.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] StripChat",
+      "version": 1,
+      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理",
+      "webSite": "https://zh.stripchat.com",
+      "instance": "stripchat2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/StripChat.js",
+      "type": 100
     }
   ]
 }
