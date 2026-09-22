@@ -1,8 +1,8 @@
 [
   {
     "name": "[禁] GetAV",
-    "version": 1,
-    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选",
+    "version": 2,
+    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。v2 修复 JSON 响应解析",
     "webSite": "https://getav.net",
     "instance": "getav2026",
     "order": "E",
