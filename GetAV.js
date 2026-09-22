@@ -1,6 +1,6 @@
 // ignore
 //@name:[禁] GetAV
-//@version:1
+//@version:2
 //@webSite:https://getav.net
 //@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。
 //@type:100
@@ -39,15 +39,47 @@ const kTgGroup = 'https://t.me/tvshare23'
 const kUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
+/**
+ * 把 req 的返回值安全地解析成 JSON 对象。
+ *
+ * ⚠️ 关键：uz 的 `req` 会按响应头 content-type 自动决定 `data` 的类型 ——
+ * content-type 是 application/json 时，`data` 已经是**解析好的对象**；
+ * 是 text/* 或无 content-type 时 `data` 才是字符串。
+ * 所以**绝对不能无条件 `JSON.parse(pro.data)`**，那会在真机上直接抛 "Unexpected token o"。
+ * 官方扩展也是这么兼容的，见 panTools2.js: `typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data`
+ */
+function parseJsonData(d) {
+    if (d === null || d === undefined || d === '') {
+        return null
+    }
+    if (typeof d === 'string') {
+        try {
+            return JSON.parse(d)
+        } catch (e) {
+            return null
+        }
+    }
+    if (typeof d === 'object' && !(d instanceof ArrayBuffer) && !ArrayBuffer.isView(d)) {
+        return d
+    }
+    return null
+}
+
+/** 把 req 的返回值安全地取成文本 */
+function asText(d) {
+    return typeof d === 'string' ? d : ''
+}
+
+/** 从 URL 里取「协议+域名」 */
+function originOf(url) {
+    const m = String(url || '').match(/^(https?:\/\/[^\/]+)/i)
+    return m ? m[1] : ''
+}
+
 class getavClass extends WebApiBase {
     constructor() {
         super()
-        this.kHeaders = {
-            'User-Agent': kUa,
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            Accept: 'application/json, text/plain, */*',
-        }
-        // 自愈后的可用域名，仅存活于本次运行
+        // 自愈到可用域名后记在这里，后续请求都用它
         this._healedHost = ''
     }
 
@@ -578,10 +610,8 @@ class getavClass extends WebApiBase {
             return this._healedHost
         }
         const h = this.hostOf(this.webSite)
-        if (h && this._indexOfDomain(h) !== -1) {
-            return this._domainAt(this._indexOfDomain(h))
-        }
-        return kDomains[0]
+        const i = h ? this._indexOfDomain(h) : -1
+        return i === -1 ? kDomains[0] : this._domains()[i]
     }
 
     _domains() {
@@ -598,10 +628,6 @@ class getavClass extends WebApiBase {
         return -1
     }
 
-    _domainAt(i) {
-        return this._domains()[i]
-    }
-
     _orderDomains(host) {
         const ds = this._domains().slice()
         for (let i = 0; i < ds.length; i++) {
@@ -614,84 +640,41 @@ class getavClass extends WebApiBase {
         this._domainOrder = ds
     }
 
-    async apiGet(path) {
-        const host = await this.ensureDomain()
-        if (!host) {
-            return { json: null, error: '所有官方域名都连不上，稍后再试（可到 https://getav.info 看最新地址；若一直不通，试着把 DNS 换成 8.8.8.8 / 1.1.1.1）' }
-        }
-        let r = await this.get(host + path)
-        if (r.code !== 200 || !r.data) {
-            // 当前域名挂了，重探一次
-            this._healedHost = ''
-            const host2 = await this.ensureDomain()
-            if (host2 && host2 !== host) {
-                r = await this.get(host2 + path)
-            }
-        }
-        const json = this.parseJson(r.data)
-        if (json) {
-            return { json: json, error: '' }
-        }
-        // 站点在 Cloudflare 后面，请求太密会被丢一个 JS 挑战页（403 +「Just a moment...」）
-        const guess = this.describeFailure(r)
-        return { json: null, error: guess || r.error || '接口返回异常（HTTP ' + r.code + '）' }
-    }
-
     /**
-     * 找到第一个能返回正常 JSON 的域名
-     * @returns {Promise<string>}
+     * 对齐原 py 的 _request_with_failover：
+     * 直接在各个域名上请求**目标路径**，谁先返回可用 JSON 就用谁，并记住这个域名。
+     * 不再做额外的「探测请求」——探测会多打一次接口，反而更容易触发风控。
      */
-    async ensureDomain() {
-        if (this._healedHost) {
-            return this._healedHost
-        }
+    async apiGet(path) {
         const ds = this._domains()
-        // 5 条线路各试 2 轮：这些站偶尔会抖一下或丢一次 CF 挑战，只试一次容易误判成「全挂」
-        for (let round = 0; round < 2; round++) {
-            for (let i = 0; i < ds.length; i++) {
-                const r = await this.get(ds[i] + '/api/movies?category=latest&limit=1&page=1&locale=zh')
-                const json = this.parseJson(r.data)
-                if (json && json.data && json.data.movies) {
-                    this._healedHost = ds[i]
-                    return ds[i]
-                }
+        let last = null
+        for (let i = 0; i < ds.length; i++) {
+            const r = await this.get(ds[i] + path)
+            last = r
+            const json = parseJsonData(r.data)
+            if (json) {
+                this._healedHost = ds[i]
+                return { json: json, error: '' }
             }
         }
-        return ''
+        return { json: null, error: this.describeFailure(last) }
     }
 
     async get(url) {
+        const origin = originOf(url) || this.curHost()
         try {
             const p = await req(url, {
                 headers: {
-                    ...this.kHeaders,
-                    Referer: this.curHostOrWebSite() + '/',
+                    'User-Agent': kUa,
+                    Accept: 'application/json, text/plain, */*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    Origin: origin,
+                    Referer: origin + '/',
                 },
-                sendTimeout: 12000,
-                receiveTimeout: 15000,
             })
-            return { code: p.code, data: p.data || '', error: p.error || '' }
+            return { code: p.code, data: p.data, error: p.error || '' }
         } catch (e) {
-            return { code: -1, data: '', error: e.message }
-        }
-    }
-
-    curHostOrWebSite() {
-        if (this._healedHost) {
-            return this._healedHost
-        }
-        const h = this.hostOf(this.webSite)
-        return h ? 'https://' + h : kDomains[0]
-    }
-
-    parseJson(text) {
-        if (!text) {
-            return null
-        }
-        try {
-            return JSON.parse(text)
-        } catch (e) {
-            return null
+            return { code: -1, data: null, error: e.message }
         }
     }
 
@@ -699,23 +682,30 @@ class getavClass extends WebApiBase {
      * 把「拿到的不是 JSON」这种失败翻译成人话，方便排查
      */
     describeFailure(r) {
-        const body = String(r.data || '')
+        if (!r) {
+            return '网络请求失败，请稍后重试'
+        }
+        const body = asText(r.data)
         if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
-            return '被 Cloudflare 风控拦了（点得太快），等几分钟再试或换个分类'
+            return '被 Cloudflare 人机验证拦了（请求太密），等几分钟再试或换个分类'
         }
-        if (body.indexOf('Edge IP Restricted') !== -1) {
+        if (body.indexOf('Edge IP Restricted') !== -1 || body.indexOf('error code: 1034') !== -1) {
             return 'CDN 边缘节点异常（Cloudflare 1034），稍后重试或切换网络'
         }
-        if (body.indexOf('error code: 1034') !== -1) {
-            return 'CDN 边缘节点异常（Cloudflare 1034），稍后重试或切换网络'
+        if (r.code === 403) {
+            return '站点拒绝访问（HTTP 403），可能被风控封锁，换手机流量试试'
         }
-        if (r.code === 0) {
-            return '连不上（域名被墙或 DNS 被污染），可在路由器把 DNS 换成 8.8.8.8 / 1.1.1.1'
+        if (r.code === 429) {
+            return '被限流了（HTTP 429），歇一会儿再试'
         }
-        if (r.code === 403 || r.code === 429) {
-            return '被站点限流了（HTTP ' + r.code + '），歇一会儿再试'
+        if (r.code === 408) {
+            return '请求超时，检查网络后重试'
         }
-        return ''
+        if (!r.code || r.code < 0) {
+            // 这几个域名时不时会换，给个查最新地址的地方
+            return '所有官方域名都连不上（' + (r.error || '网络错误') + '）。可到 https://getav.info 看最新地址；若一直不通，试试把 DNS 换成 8.8.8.8 / 1.1.1.1'
+        }
+        return '接口返回异常（HTTP ' + r.code + '）'
     }
 
     //MARK: - 工具
