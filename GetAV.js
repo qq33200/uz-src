@@ -617,7 +617,7 @@ class getavClass extends WebApiBase {
     async apiGet(path) {
         const host = await this.ensureDomain()
         if (!host) {
-            return { json: null, error: '所有官方域名都连不上，稍后再试（可到 https://getav.info 看最新地址）' }
+            return { json: null, error: '所有官方域名都连不上，稍后再试（可到 https://getav.info 看最新地址；若一直不通，试着把 DNS 换成 8.8.8.8 / 1.1.1.1）' }
         }
         let r = await this.get(host + path)
         if (r.code !== 200 || !r.data) {
@@ -629,7 +629,12 @@ class getavClass extends WebApiBase {
             }
         }
         const json = this.parseJson(r.data)
-        return { json: json, error: json ? '' : r.error || '接口返回异常（HTTP ' + r.code + '）' }
+        if (json) {
+            return { json: json, error: '' }
+        }
+        // 站点在 Cloudflare 后面，请求太密会被丢一个 JS 挑战页（403 +「Just a moment...」）
+        const guess = this.describeFailure(r)
+        return { json: null, error: guess || r.error || '接口返回异常（HTTP ' + r.code + '）' }
     }
 
     /**
@@ -641,12 +646,15 @@ class getavClass extends WebApiBase {
             return this._healedHost
         }
         const ds = this._domains()
-        for (let i = 0; i < ds.length; i++) {
-            const r = await this.get(ds[i] + '/api/movies?category=latest&limit=1&page=1&locale=zh')
-            const json = this.parseJson(r.data)
-            if (json && json.data && json.data.movies) {
-                this._healedHost = ds[i]
-                return ds[i]
+        // 5 条线路各试 2 轮：这些站偶尔会抖一下或丢一次 CF 挑战，只试一次容易误判成「全挂」
+        for (let round = 0; round < 2; round++) {
+            for (let i = 0; i < ds.length; i++) {
+                const r = await this.get(ds[i] + '/api/movies?category=latest&limit=1&page=1&locale=zh')
+                const json = this.parseJson(r.data)
+                if (json && json.data && json.data.movies) {
+                    this._healedHost = ds[i]
+                    return ds[i]
+                }
             }
         }
         return ''
@@ -685,6 +693,29 @@ class getavClass extends WebApiBase {
         } catch (e) {
             return null
         }
+    }
+
+    /**
+     * 把「拿到的不是 JSON」这种失败翻译成人话，方便排查
+     */
+    describeFailure(r) {
+        const body = String(r.data || '')
+        if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
+            return '被 Cloudflare 风控拦了（点得太快），等几分钟再试或换个分类'
+        }
+        if (body.indexOf('Edge IP Restricted') !== -1) {
+            return 'CDN 边缘节点异常（Cloudflare 1034），稍后重试或切换网络'
+        }
+        if (body.indexOf('error code: 1034') !== -1) {
+            return 'CDN 边缘节点异常（Cloudflare 1034），稍后重试或切换网络'
+        }
+        if (r.code === 0) {
+            return '连不上（域名被墙或 DNS 被污染），可在路由器把 DNS 换成 8.8.8.8 / 1.1.1.1'
+        }
+        if (r.code === 403 || r.code === 429) {
+            return '被站点限流了（HTTP ' + r.code + '），歇一会儿再试'
+        }
+        return ''
     }
 
     //MARK: - 工具
