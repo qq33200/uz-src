@@ -1,6 +1,6 @@
 // ignore
 //@name:[禁] StripChat
-//@version:1
+//@version:2
 //@webSite:https://zh.stripchat.com
 //@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。
 //@type:100
@@ -16,11 +16,13 @@ import { } from '../../core/uzUtils.js'
 /** 三条官方线路，顺序即优先级 */
 const kDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'https://zh.stripol.com']
 
-/** 拉流用的边缘节点，按顺序试 */
+/**
+ * 拉流用的边缘节点，按顺序试。
+ * 与原 py 的 playerContent 完全一致：先 sacfedge，失败再降级到 doppiocdn.org。
+ */
 const kEdgeMasters = [
     'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
-    'https://edge-hls.doppiocdn.media/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
-    'https://edge-hls.doppiocdn.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
+    'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
 ]
 
 /** 每页多少个主播 */
@@ -42,14 +44,48 @@ const kDanmuInterval = 2
 
 const kUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0'
 
+/**
+ * 把 req 的返回值安全地解析成 JSON 对象。
+ *
+ * ⚠️ 关键：uz 的 `req` 会按响应头 content-type 自动决定 `data` 的类型 ——
+ * content-type 是 application/json 时，`data` 已经是**解析好的对象**；
+ * 是 text/* 或无 content-type 时 `data` 才是字符串。
+ * 所以**绝对不能无条件 `JSON.parse(pro.data)`**，那会在真机上直接抛 "Unexpected token o"。
+ * 官方扩展也是这么兼容的，见 panTools2.js: `typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data`
+ */
+function parseJsonData(d) {
+    if (d === null || d === undefined || d === '') {
+        return null
+    }
+    if (typeof d === 'string') {
+        try {
+            return JSON.parse(d)
+        } catch (e) {
+            return null
+        }
+    }
+    // 已解析好的对象（排除二进制)
+    if (typeof d === 'object' && !(d instanceof ArrayBuffer) && !ArrayBuffer.isView(d)) {
+        return d
+    }
+    return null
+}
+
+/** 把 req 的返回值安全地取成文本（m3u8 / HTML 用） */
+function asText(d) {
+    return typeof d === 'string' ? d : ''
+}
+
+/** 从 URL 里取「协议+域名」 */
+function originOf(url) {
+    const m = String(url || '').match(/^(https?:\/\/[^\/]+)/i)
+    return m ? m[1] : ''
+}
+
 class stripchatClass extends WebApiBase {
     constructor() {
         super()
-        this.kHeaders = {
-            'User-Agent': kUa,
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            Accept: 'application/json, text/plain, */*',
-        }
+        // 自愈到可用域名后记在这里，后续请求都用它
         this._healedHost = ''
     }
 
@@ -197,8 +233,11 @@ class stripchatClass extends WebApiBase {
                 '】\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
                 'StripChat 直播直连。\n' +
                 '门票房（🎫）对未付费游客只放广告片，属正常现象，换个 🔴 免费房即可。'
-            detModel.vod_play_from = 'StripChat 直播'
-            detModel.vod_play_url = '自动（最高画质）$' + uid
+            // 与原 py 的 detailContent 一致：给三条线路（主线路 / 备用线路 / 备用线路三），
+            // 三条最终都会去拉同一个 HLS 清单，作用相当于 TVBox 里的「换源」。
+            detModel.vod_play_from = '线路一$$$线路二$$$线路三'
+            detModel.vod_play_url =
+                '主线路$' + uid + '$$$备用线路$lemon_' + uid + '$$$备用线路三$sacf_' + uid
             backData.data = detModel
         } catch (error) {
             backData.error = '获取详情失败～' + error.message
@@ -209,17 +248,24 @@ class stripchatClass extends WebApiBase {
     //MARK: - 播放
 
     /**
-     * 拿 master 清单 → 展开成各画质的 variant 地址。
-     * master 里的 #EXT-X-MOUFLON:PSCH / variant 里的 #EXT-X-MOUFLON:EXT-REF 都是附加标签，
-     * 播放器按非标准标签忽略即可；真正的分片地址是明文的，所以不需要任何代理。
+     * 对齐原 py 的 playerContent：
+     *   sid = id.split('_')[-1]
+     *   先拉 sacfedge master，失败再降级 doppiocdn master
+     *   把 #EXT-X-STREAM-INF 后面的那一行作为播放地址（各画质一条）
+     *
+     * master 里的 #EXT-X-MOUFLON:PSCH、variant 里的 #EXT-X-MOUFLON:EXT-REF 都是附加标签，
+     * 播放器按非标准标签忽略即可；真正的分片地址是明文的，所以直连即可，不需要代理。
      * @param {UZArgs} args
      * @returns {Promise<RepVideoPlayUrl>}
      */
     async getVideoPlayUrl(args) {
         let backData = new RepVideoPlayUrl()
         try {
-            const raw = String(args.url || '').trim()
-            const sid = raw.split('_').pop()
+            // 三条线路分别给 uid / lemon_uid / sacf_uid，统一取最后一段当主播 ID
+            const sid = String(args.url || '')
+                .trim()
+                .split('_')
+                .pop()
             if (!/^\d+$/.test(sid)) {
                 backData.error = '主播 ID 解析失败'
                 return JSON.stringify(backData)
@@ -227,19 +273,22 @@ class stripchatClass extends WebApiBase {
 
             const headers = {
                 'User-Agent': kUa,
-                Origin: 'https://zh.stripchat.com',
-                Referer: 'https://zh.stripchat.com/',
+                Origin: this.curHost(),
+                Referer: this.curHost() + '/',
             }
             backData.headers = headers
 
             let variants = []
-            for (let i = 0; i < kEdgeMasters.length && !variants.length; i++) {
+            for (let i = 0; i < kEdgeMasters.length; i++) {
                 const master = kEdgeMasters[i].split('{id}').join(sid)
-                const r = await this.get(master, 'https://zh.stripchat.com/')
-                if (r.code !== 200 || !r.data) {
-                    continue
+                const r = await this.get(master)
+                const text = asText(r.data)
+                if (r.code === 200 && text.indexOf('#EXT-X-STREAM-INF') !== -1) {
+                    variants = this.parseVariants(text, master)
+                    if (variants.length) {
+                        break
+                    }
                 }
-                variants = this.parseVariants(r.data, master)
             }
 
             if (!variants.length) {
@@ -247,45 +296,11 @@ class stripchatClass extends WebApiBase {
                 return JSON.stringify(backData)
             }
 
-            // 逐个校验，把「真直播」和「广告循环」区分开（最多查 3 条，够用就停）
-            let live = []
-            let all = []
-            for (let i = 0; i < variants.length && i < 3; i++) {
-                const v = variants[i]
-                const vr = await this.get(v.url, 'https://zh.stripchat.com/')
-                const ok = vr.code === 200 && vr.data && vr.data.indexOf('#EXTINF') !== -1
-                const isAd = ok && (vr.data.indexOf('#EXT-X-MOUFLON-ADVERT') !== -1 || vr.data.indexOf('#EXT-X-ENDLIST') !== -1)
-                const item = {
-                    name: v.name + (ok && !isAd ? '' : ' ⚠未开播'),
-                    url: v.url,
-                    headers: headers,
-                }
-                all.push(item)
-                if (ok && !isAd) {
-                    live.push(item)
-                    if (live.length >= 2) {
-                        break
-                    }
-                }
-            }
-            // 没查到的剩余画质也带上，让用户自己挑
+            let urls = []
             for (let i = 0; i < variants.length; i++) {
-                let dup = false
-                for (let j = 0; j < all.length; j++) {
-                    if (all[j].url === variants[i].url) {
-                        dup = true
-                        break
-                    }
-                }
-                if (!dup) {
-                    all.push({ name: variants[i].name, url: variants[i].url, headers: headers })
-                }
+                urls.push({ name: variants[i].name, url: variants[i].url, headers: headers })
             }
-
-            backData.urls = live.length ? live : all
-            if (!live.length) {
-                backData.error = '当前只拿到广告循环（门票房或未公开直播），换个 🔴 免费房试试'
-            }
+            backData.urls = urls
 
             if (kEnableDanmu) {
                 backData.danMu = await this.fetchDanmu(sid)
@@ -627,11 +642,22 @@ class stripchatClass extends WebApiBase {
             return this._healedHost
         }
         const h = this.hostOf(this.webSite)
-        return h ? 'https://' + h : kDomains[0]
+        const i = h ? this._indexOfDomain(h) : -1
+        return i === -1 ? kDomains[0] : this._domains()[i]
     }
 
     _domains() {
         return this._domainOrder || kDomains
+    }
+
+    _indexOfDomain(host) {
+        const ds = this._domains()
+        for (let i = 0; i < ds.length; i++) {
+            if (this.hostOf(ds[i]) === host) {
+                return i
+            }
+        }
+        return -1
     }
 
     _orderDomains(host) {
@@ -646,83 +672,72 @@ class stripchatClass extends WebApiBase {
         this._domainOrder = ds
     }
 
+    /**
+     * 对齐原 py 的 _request_with_failover：
+     * 直接在各个域名上请求**目标路径**，谁先返回可用 JSON 就用谁，并记住这个域名。
+     * 不再做额外的「探测请求」——探测会多打一次接口，反而更容易触发风控。
+     */
     async apiGet(path) {
-        const host = await this.ensureDomain()
-        if (!host) {
-            return { json: null, error: '三条官方线路都连不上，请检查网络后重试' }
-        }
-        let r = await this.get(host + path)
-        if (r.code !== 200 || !r.data) {
-            this._healedHost = ''
-            const host2 = await this.ensureDomain()
-            if (host2 && host2 !== host) {
-                r = await this.get(host2 + path)
+        const ds = this._domains()
+        let last = null
+        for (let i = 0; i < ds.length; i++) {
+            const r = await this.get(ds[i] + path)
+            last = r
+            const json = parseJsonData(r.data)
+            if (json) {
+                this._healedHost = ds[i]
+                return { json: json, error: '' }
             }
         }
-        const json = this.parseJson(r.data)
-        if (json) {
-            return { json: json, error: '' }
-        }
-        return { json: null, error: this.describeFailure(r) || r.error || '接口返回异常（HTTP ' + r.code + '）' }
+        return { json: null, error: this.describeFailure(last) }
     }
 
     /**
-     * 把「拿到的不是 JSON」翻译成人话
+     * 把失败原因翻译成人话（拿到的可能根本不是 JSON，而是 CF 挑战页 / 错误页）
      */
     describeFailure(r) {
-        const body = String(r.data || '')
+        if (!r) {
+            return '网络请求失败，请稍后重试'
+        }
+        const body = asText(r.data)
         if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
-            return '被 Cloudflare 风控拦了（点得太快），等几分钟再试'
+            return '被 Cloudflare 人机验证拦了（请求太密），等几分钟再试'
         }
         if (r.code === 403) {
-            return '站点拒绝访问（HTTP 403）。StripChat 对部分地区/机房 IP 有封锁，换手机流量或换个网络再试'
-        }
-        if (r.code === 0) {
-            return '连不上（域名被墙或 DNS 被污染），可在路由器把 DNS 换成 8.8.8.8 / 1.1.1.1'
+            return '站点拒绝访问（HTTP 403），可能被风控封锁，换手机流量试试'
         }
         if (r.code === 429) {
             return '被限流了（HTTP 429），歇一会儿再试'
         }
-        return ''
+        if (r.code === 408) {
+            return '请求超时，检查网络后重试'
+        }
+        if (!r.code || r.code < 0) {
+            return '三条线路都连不上（' + (r.error || '网络错误') + '）'
+        }
+        return '接口返回异常（HTTP ' + r.code + '）'
     }
 
-    async ensureDomain() {
-        if (this._healedHost) {
-            return this._healedHost
-        }
-        const ds = this._domains()
-        // 每条线路试 2 轮：这几条线路偶尔会抖一下，只试一次容易误判成「全挂」
-        for (let round = 0; round < 2; round++) {
-            for (let i = 0; i < ds.length; i++) {
-                const r = await this.get(
-                    ds[i] +
-                        '/api/front/models?improveTs=false&removeShows=false&limit=1&offset=0&primaryTag=girls' +
-                        '&sortBy=stripRanking&rcmGrp=A&rbCnGr=true&prxCnGr=false&nic=false'
-                )
-                const json = this.parseJson(r.data)
-                if (json && json.models) {
-                    this._healedHost = ds[i]
-                    return ds[i]
-                }
-            }
-        }
-        return ''
-    }
-
-    async get(url, referer) {
+    /**
+     * 发一个 GET。
+     * 注意：uz 的 sendTimeout / receiveTimeout 单位是「秒」（官方模板里写的是 40），
+     * 这里不传，交给 App 用默认值，避免单位理解错导致「永不超时」。
+     */
+    async get(url, refererOrigin) {
+        const origin = refererOrigin || originOf(url) || this.curHost()
         try {
             const p = await req(url, {
                 headers: {
-                    ...this.kHeaders,
-                    Referer: referer || this.curHost() + '/',
-                    Origin: this.curHost(),
+                    'User-Agent': kUa,
+                    Accept: 'application/json, text/plain, */*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    Origin: origin,
+                    Referer: origin + '/',
                 },
-                sendTimeout: 12000,
-                receiveTimeout: 15000,
             })
-            return { code: p.code, data: p.data || '', error: p.error || '' }
+            return { code: p.code, data: p.data, error: p.error || '' }
         } catch (e) {
-            return { code: -1, data: '', error: e.message }
+            return { code: -1, data: null, error: e.message }
         }
     }
 
@@ -739,17 +754,6 @@ class stripchatClass extends WebApiBase {
             out[key] = v === undefined || v === null ? '' : String(v)
         }
         return out
-    }
-
-    parseJson(text) {
-        if (!text) {
-            return null
-        }
-        try {
-            return JSON.parse(text)
-        } catch (e) {
-            return null
-        }
     }
 
     hostOf(u) {
