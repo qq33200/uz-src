@@ -660,7 +660,30 @@ class stripchatClass extends WebApiBase {
             }
         }
         const json = this.parseJson(r.data)
-        return { json: json, error: json ? '' : r.error || '接口返回异常（HTTP ' + r.code + '）' }
+        if (json) {
+            return { json: json, error: '' }
+        }
+        return { json: null, error: this.describeFailure(r) || r.error || '接口返回异常（HTTP ' + r.code + '）' }
+    }
+
+    /**
+     * 把「拿到的不是 JSON」翻译成人话
+     */
+    describeFailure(r) {
+        const body = String(r.data || '')
+        if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
+            return '被 Cloudflare 风控拦了（点得太快），等几分钟再试'
+        }
+        if (r.code === 403) {
+            return '站点拒绝访问（HTTP 403）。StripChat 对部分地区/机房 IP 有封锁，换手机流量或换个网络再试'
+        }
+        if (r.code === 0) {
+            return '连不上（域名被墙或 DNS 被污染），可在路由器把 DNS 换成 8.8.8.8 / 1.1.1.1'
+        }
+        if (r.code === 429) {
+            return '被限流了（HTTP 429），歇一会儿再试'
+        }
+        return ''
     }
 
     async ensureDomain() {
@@ -668,16 +691,19 @@ class stripchatClass extends WebApiBase {
             return this._healedHost
         }
         const ds = this._domains()
-        for (let i = 0; i < ds.length; i++) {
-            const r = await this.get(
-                ds[i] +
-                    '/api/front/models?improveTs=false&removeShows=false&limit=1&offset=0&primaryTag=girls' +
-                    '&sortBy=stripRanking&rcmGrp=A&rbCnGr=true&prxCnGr=false&nic=false'
-            )
-            const json = this.parseJson(r.data)
-            if (json && json.models) {
-                this._healedHost = ds[i]
-                return ds[i]
+        // 每条线路试 2 轮：这几条线路偶尔会抖一下，只试一次容易误判成「全挂」
+        for (let round = 0; round < 2; round++) {
+            for (let i = 0; i < ds.length; i++) {
+                const r = await this.get(
+                    ds[i] +
+                        '/api/front/models?improveTs=false&removeShows=false&limit=1&offset=0&primaryTag=girls' +
+                        '&sortBy=stripRanking&rcmGrp=A&rbCnGr=true&prxCnGr=false&nic=false'
+                )
+                const json = this.parseJson(r.data)
+                if (json && json.models) {
+                    this._healedHost = ds[i]
+                    return ds[i]
+                }
             }
         }
         return ''
