@@ -1,8 +1,8 @@
 [
   {
     "name": "[禁] StripChat",
-    "version": 1,
-    "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理",
+    "version": 2,
+    "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。v2 修复 JSON 响应解析，播放直连官方 HLS 不需要代理",
     "webSite": "https://zh.stripchat.com",
     "instance": "stripchat2026",
     "order": "E",
