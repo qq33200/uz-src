@@ -1,0 +1,11 @@
+[
+  {
+    "name": "MoboReels 畅读热剧",
+    "version": 1,
+    "remark": "竖屏短剧站（Nuxt SSR）。30 个题材分类 + 站内搜索；剧集数据内联在页面的 window.__NUXT__ 里，直接求值取用。⚠️ 详情/播放链路未能在开发机上验证：本机（Node/curl）请求详情页会被站点 WAF 降级成不含剧集数据的精简版，分类页/搜索页则正常（已实测）。真机是 Flutter 原生请求栈，通常能拿到完整版；若详情页报错，请把提示原文反馈。",
+    "webSite": "https://www.moboreels.com/cn/",
+    "order": "H",
+    "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/MoboReels.js",
+    "type": 101
+  }
+]
