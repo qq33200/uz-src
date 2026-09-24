@@ -1,0 +1,12 @@
+[
+  {
+    "name": "[禁] 电视直播",
+    "version": 1,
+    "remark": "96 个频道全硬编码、零网络请求（点开就是列表，不转圈）。8 个分类含 4 个成人分类；2026-09-24 实测 71/96 可直连，失效频道已排到每类末尾但全部保留（链接会自行复活），右侧备注写明每个频道的实测状态。支持按频道名搜索。",
+    "webSite": "http://107.150.60.122/live/cctv6hd.m3u8",
+    "instance": "livetv2026",
+    "order": "E",
+    "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/LiveTV.js",
+    "type": 100
+  }
+]
