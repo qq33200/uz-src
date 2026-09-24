@@ -39,6 +39,16 @@
       "order": "E",
       "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/StripChat.js",
       "type": 100
+    },
+    {
+      "name": "[禁] 蝴蝶·BestJavPorn",
+      "version": 1,
+      "remark": "bestjavporn.me：7 分类；详情页 rocketlazyload → /xx/ 嵌入页 pox+dp，播放时实时 AES-256-CBC 解密直出 m3u8",
+      "webSite": "https://bestjavporn.me",
+      "instance": "bestjav2026",
+      "order": "F",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/Hudie_bestjav.js",
+      "type": 100
     }
   ]
 }
