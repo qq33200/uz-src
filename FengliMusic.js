@@ -1,13 +1,15 @@
 // ignore
 //@name:凤梨音乐
-//@version:1
+//@version:2
 //@webSite:https://www.flmp3.pro
-//@remark:flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。
+//@remark:flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。v2 修正：// ignore 标记补齐成对（原先为奇数，真机会把整个实现代码当忽略块丢掉，表现为「执行扩展错误」）。
 //@order: G
 //@codeID:
 //@env:
 //@isAV:0
 //@deprecated:0
+
+// ignore
 
 // ignore
 // 不支持导入，这里只是本地开发用于代码提示
