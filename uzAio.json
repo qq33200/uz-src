@@ -1,9 +1,19 @@
 {
   "vod": [
     {
-      "name": "[禁] 蝴蝶影院",
+      "name": "[禁] 一锅端聚合",
       "version": 1,
-      "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选",
+      "remark": "51 站聚合（短剧/影视/成人/音频/动漫），站点直接作一级分类、站内分类走筛选面板；播放头透传官方防盗链签名 x-aggr-sig",
+      "webSite": "https://av.telstra.com.cv",
+      "instance": "yiguoduan2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/Yiguoduan.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] 蝴蝶影院",
+      "version": 2,
+      "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选。v2 修正请求超时参数",
       "webSite": "https://ptt01.com",
       "instance": "hudieyingyuan2026",
       "order": "E",
