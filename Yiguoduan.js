@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] 一锅端聚合
-//@version:1
+//@version:2
 //@webSite:https://av.telstra.com.cv
-//@remark:51 站聚合（短剧/影视/成人/音频/动漫）。uz 无文件夹卡片机制，故把站点直接作为一级分类（按原版 6 大类聚簇排序 + 前缀），站内分类走筛选面板；播放头严格透传官方防盗链签名 x-aggr-sig。
+//@remark:51 站聚合（短剧/影视/成人/音频/动漫）。uz 无文件夹卡片机制，故把站点直接作为一级分类（按原版 6 大类聚簇排序 + 前缀），站内分类走筛选面板；播放头严格透传官方防盗链签名 x-aggr-sig。；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
 //@type:100
 //@instance:yiguoduan2026
 //@isAV:1
@@ -32,14 +32,14 @@ import { } from '../../core/uzUtils.js'
 //     站点提升为一级分类，站内分类改用二级筛选面板
 //   · uz 没有 parse（解析器）概念 → parse!=0 时改用 uz 的 sniffer 嗅探
 //   · uz 的 req 会按 content-type 把 JSON 响应直接解析成对象 →
-//     统一走 parseJsonData() 兼容「对象 / 字符串」两种形态
+//     统一走 ygParseJsonData() 兼容「对象 / 字符串」两种形态
 //   · 后端 cj 的 episodes 会返回若干条完全相同的线路 → 按播放地址去重
 //   · 后端找不到播放参数时会把入参原样回显（b8xx6 传网址时就是这样）→
 //     识别到「回显」后用另一个候选参数兜底重试一次
 // ============================================================================
 
 // ---------------- 站点与分类字典（自 93合1.py 原样抽取） ----------------
-const kSites = {
+const ygSites = {
     "asmrhoney": {"name": "ASMRHoney", "platform": "adult", "categories": [{"n": "最新更新", "v": "latest"}, {"n": "中文ASMR", "v": "lang_zh"}, {"n": "日语ASMR", "v": "lang_ja"}, {"n": "韩语ASMR", "v": "lang_ko"}, {"n": "英语ASMR", "v": "lang_en"}, {"n": "混合语言", "v": "lang_mixed"}, {"n": "舔耳", "v": "tag_ear_licking"}, {"n": "口腔音", "v": "tag_mouth_sounds"}, {"n": "触发音", "v": "tag_trigger_sounds"}, {"n": "角色扮演", "v": "tag_roleplay"}, {"n": "耳语", "v": "tag_whisper"}, {"n": "丝袜", "v": "tag_pantyhose"}, {"n": "刮擦", "v": "tag_scratching"}, {"n": "性感", "v": "tag_sexy"}, {"n": "SFW全年龄", "v": "tag_sfw"}, {"n": "NSFW", "v": "tag_nsfw"}, {"n": "耳吃", "v": "tag_eareating"}, {"n": "舌头", "v": "tag_tongue"}, {"n": "助眠", "v": "tag_sleep_aid"}, {"n": "呼吸音", "v": "tag_breathing"}, {"n": "足部", "v": "tag_feet"}, {"n": "亲吻", "v": "tag_kiss"}, {"n": "音频专辑", "v": "audio_albums"}, {"n": "音频单曲", "v": "audio_tracks"}]},
     "avxq": {"name": "AV星球", "platform": "adult", "categories": [{"n": "学生萝莉", "v": "66"}, {"n": "日本AV", "v": "44"}, {"n": "口交自慰", "v": "62"}, {"n": "群交多P", "v": "63"}, {"n": "强奸迷奸", "v": "67"}, {"n": "丝袜制服", "v": "68"}, {"n": "国产AV", "v": "46"}, {"n": "乱伦系列", "v": "45"}, {"n": "素人特摄", "v": "65"}, {"n": "探花约炮", "v": "47"}, {"n": "日韩精选", "v": "61"}, {"n": "VR专区", "v": "64"}, {"n": "主播大秀", "v": "48"}, {"n": "反差母狗", "v": "70"}, {"n": "国产传媒", "v": "50"}, {"n": "网曝吃瓜", "v": "49"}, {"n": "异域风情", "v": "71"}, {"n": "中文字幕", "v": "53"}, {"n": "偷拍偷窥", "v": "51"}, {"n": "色情动漫", "v": "55"}]},
     "b8xx6": {"name": "8XX6", "platform": "adult", "categories": [{"n": "国产", "v": "901179"}, {"n": "有码", "v": "911179"}, {"n": "无码", "v": "921179"}, {"n": "欧美", "v": "931179"}, {"n": "传媒", "v": "941179"}, {"n": "探花", "v": "951179"}, {"n": "中文", "v": "961179"}, {"n": "动漫", "v": "971179"}]},
@@ -93,7 +93,7 @@ const kSites = {
     "tyyszy": {"name": "甜晕资源", "platform": "adult", "categories": [{"n": "电影", "v": "1"}, {"n": "电视剧", "v": "2"}, {"n": "短剧", "v": "54"}]},
 }
 
-const kTopClasses = [
+const ygTopClasses = [
     {"type_name": "全部", "type_id": "all", "type_flag": "1"},
     {"type_name": "短剧", "type_id": "short", "type_flag": "1"},
     {"type_name": "影视", "type_id": "drama", "type_flag": "1"},
@@ -103,22 +103,22 @@ const kTopClasses = [
 ]
 
 // ---------------- 站点归属的聚合后端 ----------------
-const kBase = 'https://av.telstra.com.cv'
+const ygBase = 'https://av.telstra.com.cv'
 
 // ---------------- 原版常量 ----------------
-const kTgGroup = 'https://t.me/tvshare23'
-const kBrand = '蝴蝶影视'
-const kBrandActor = '🦋 TG群: @tvshare23'
-const kBrandDirector = '🦋 蝴蝶影视'
-const kUa =
+const ygTgGroup = 'https://t.me/tvshare23'
+const ygBrand = '蝴蝶影视'
+const ygBrandActor = '🦋 TG群: @tvshare23'
+const ygBrandDirector = '🦋 蝴蝶影视'
+const ygUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
 // 原版 _get_spiders_for_plat 里短剧的优先顺序
-const kShortPriority = ['huangdou', 'kuangbiao', 'yidouge', 'xifu', 'xingya']
+const ygShortPriority = ['huangdou', 'kuangbiao', 'yidouge', 'xifu', 'xingya']
 
 // 一级分类的聚簇顺序与前缀。原版 6 大类里「全部」等价于「所有站点」，
 // 站点提升为一级后它已自然表达，故不再单列。
-const kPlatforms = [
+const ygPlatforms = [
     { id: 'short', name: '短剧', emoji: '⚡' },
     { id: 'drama', name: '影视', emoji: '🎬' },
     { id: 'adult', name: '成人', emoji: '🔞' },
@@ -127,7 +127,7 @@ const kPlatforms = [
 ]
 
 // 原版 _universal_pic 的直连图床白名单
-const kDirectPicHosts = [
+const ygDirectPicHosts = [
     'asmrhoney.com',
     'cdn202511.com',
     'pic.892539.xyz',
@@ -144,7 +144,7 @@ const kDirectPicHosts = [
 ]
 
 // 原版 searchContent 的 12 个健康源站
-const kSearchTargets = [
+const ygSearchTargets = [
     'cj',
     'imaoyou',
     'iyf',
@@ -160,9 +160,9 @@ const kSearchTargets = [
 ]
 
 // 原版 isVideoFormat 的判定后缀
-const kVideoExt = ['.m3u8', '.mp4', '.mp3', '.m4a', '.flv', '.mkv', '.avi', '.ts', '.mpd', 'index.png']
+const ygVideoExt = ['.m3u8', '.mp4', '.mp3', '.m4a', '.flv', '.mkv', '.avi', '.ts', '.mpd', 'index.png']
 // 原版 playerContent 里额外放行的音频后缀
-const kAudioExt = ['.mp3', '.m4a', '.aac', '.wav']
+const ygAudioExt = ['.mp3', '.m4a', '.aac', '.wav']
 
 /**
  * 搜索时每个源站的接收超时。
@@ -171,7 +171,7 @@ const kAudioExt = ['.mp3', '.m4a', '.aac', '.wav']
  * 取 5000 在两种解释下都安全：毫秒语义=5 秒（贴合原 py 的 timeout=4），
  * 秒语义=5000 秒≈不超时（等同于不传）。
  */
-const kSearchReceiveTimeout = 5000
+const ygSearchReceiveTimeout = 5000
 
 /**
  * 兼容 uz 的 req 返回值：
@@ -179,7 +179,7 @@ const kSearchReceiveTimeout = 5000
  * 为 text/* 或无 content-type 时是字符串，octet-stream 时是 ArrayBuffer。
  * 所以绝对不能直接 JSON.parse(pro.data)。
  */
-function parseJsonData(d) {
+function ygParseJsonData(d) {
     if (d === null || d === undefined || d === '') {
         return null
     }
@@ -197,27 +197,27 @@ function parseJsonData(d) {
 }
 
 /** 原版 isVideoFormat */
-function isVideoUrl(u) {
+function ygIsVideoUrl(u) {
     const low = String(u || '').toLowerCase()
-    for (let i = 0; i < kVideoExt.length; i++) {
-        if (low.indexOf(kVideoExt[i]) !== -1) {
+    for (let i = 0; i < ygVideoExt.length; i++) {
+        if (low.indexOf(ygVideoExt[i]) !== -1) {
             return true
         }
     }
     return false
 }
 
-function hasAudioExt(u) {
+function ygHasAudioExt(u) {
     const low = String(u || '').toLowerCase()
-    for (let i = 0; i < kAudioExt.length; i++) {
-        if (low.indexOf(kAudioExt[i]) !== -1) {
+    for (let i = 0; i < ygAudioExt.length; i++) {
+        if (low.indexOf(ygAudioExt[i]) !== -1) {
             return true
         }
     }
     return false
 }
 
-class yiguoduanClass extends WebApiBase {
+class ygYiguoduanClass extends WebApiBase {
     constructor() {
         super()
         this._healedSite = ''
@@ -239,12 +239,12 @@ class yiguoduanClass extends WebApiBase {
                 this.webSite = String(args.url).replace(/\/+$/, '')
             }
             let list = []
-            for (let i = 0; i < kPlatforms.length; i++) {
-                const plat = kPlatforms[i]
+            for (let i = 0; i < ygPlatforms.length; i++) {
+                const plat = ygPlatforms[i]
                 const keys = this.platSites(plat.id)
                 for (let j = 0; j < keys.length; j++) {
                     const key = keys[j]
-                    const info = kSites[key] || {}
+                    const info = ygSites[key] || {}
                     let videoClass = new VideoClass()
                     videoClass.type_id = key
                     videoClass.type_name = plat.emoji + ' ' + (info.name || key)
@@ -318,7 +318,7 @@ class yiguoduanClass extends WebApiBase {
      */
     async getSubclassVideoList(args) {
         let siteKey = this.siteKeyOf(args && (args.mainClassId || args.url))
-        if (!kSites[siteKey] && args && args.subclassId) {
+        if (!ygSites[siteKey] && args && args.subclassId) {
             siteKey = this.siteKeyOf(args.subclassId)
         }
         let catV = ''
@@ -342,7 +342,7 @@ class yiguoduanClass extends WebApiBase {
     async listBySite(siteKey, page, catV) {
         let backData = new RepVideoList()
         try {
-            const info = kSites[siteKey]
+            const info = ygSites[siteKey]
             if (!info) {
                 backData.error = '未知源站：' + siteKey
                 return JSON.stringify(backData)
@@ -353,17 +353,17 @@ class yiguoduanClass extends WebApiBase {
                 tid = String(cats[0].v)
             }
             const pg = page > 0 ? page : 1
-            const url = kBase + '/api/v1/spiders/' + siteKey + '/category?tid=' + encodeURIComponent(tid) + '&pg=' + pg
+            const url = ygBase + '/api/v1/spiders/' + siteKey + '/category?tid=' + encodeURIComponent(tid) + '&pg=' + pg
             const r = await this.get(url)
-            const data = parseJsonData(r.data)
+            const data = ygParseJsonData(r.data)
 
             let items = (data && data.list) || []
 
             // 原版兜底：该分类无数据时回退取 home 列表
             // （实测后端的 home 只返回 categories，不含 list，故这里通常仍为空）
             if (!items.length && pg === 1) {
-                const hr = await this.get(kBase + '/api/v1/spiders/' + siteKey + '/home')
-                const hd = parseJsonData(hr.data)
+                const hr = await this.get(ygBase + '/api/v1/spiders/' + siteKey + '/home')
+                const hd = ygParseJsonData(hr.data)
                 items = (hd && hd.list) || []
             }
 
@@ -390,7 +390,7 @@ class yiguoduanClass extends WebApiBase {
                 model.vod_id = siteKey + '@@' + vid
                 model.vod_name = item.name || item.vod_name || '未知片名'
                 model.vod_pic = this.universalPic(siteKey, item.pic || item.vod_pic || '')
-                model.vod_remarks = this.formatRemarks(kBrand, rawMeta)
+                model.vod_remarks = this.formatRemarks(ygBrand, rawMeta)
                 list.push(model)
             }
 
@@ -432,9 +432,9 @@ class yiguoduanClass extends WebApiBase {
                 realId = raw.slice(cut + 2)
             }
 
-            const url = kBase + '/api/v1/spiders/' + siteKey + '/detail?id=' + encodeURIComponent(realId)
+            const url = ygBase + '/api/v1/spiders/' + siteKey + '/detail?id=' + encodeURIComponent(realId)
             const r = await this.get(url)
-            let v = parseJsonData(r.data)
+            let v = ygParseJsonData(r.data)
             if (!v) {
                 backData.error = r.error || '详情接口没有返回数据'
                 return JSON.stringify(backData)
@@ -450,11 +450,11 @@ class yiguoduanClass extends WebApiBase {
             const vPic = this.universalPic(siteKey, v.pic || v.vod_pic || '')
             const vContent = v.content || v.vod_content || '蝴蝶聚合源站极速穿透播放。'
             const vCategory = v.category || v.type_name || ''
-            const vRemarks = this.formatRemarks(kBrand, v.remarks || v.vod_remarks || '')
+            const vRemarks = this.formatRemarks(ygBrand, v.remarks || v.vod_remarks || '')
 
             const fullContent =
                 '【🦋 官方交流群: ' +
-                kTgGroup +
+                ygTgGroup +
                 '】\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n【当前源站】: ' +
                 siteKey.toUpperCase() +
                 '\n【影片类别】: ' +
@@ -516,8 +516,8 @@ class yiguoduanClass extends WebApiBase {
             detModel.vod_pic = vPic
             detModel.type_name = vCategory
             detModel.vod_remarks = vRemarks
-            detModel.vod_actor = kBrandActor
-            detModel.vod_director = kBrandDirector
+            detModel.vod_actor = ygBrandActor
+            detModel.vod_director = ygBrandDirector
             detModel.vod_content = fullContent
             detModel.vod_play_from = '蝴蝶·' + siteKey.toUpperCase()
             detModel.vod_play_url = entries.join('#')
@@ -571,10 +571,10 @@ class yiguoduanClass extends WebApiBase {
                 epTarget.indexOf('@') !== -1
             const playParam = epTargetLooksLikeParam ? epTarget : cleanId
 
-            const playApi = (id) => kBase + '/api/v1/spiders/' + siteKey + '/play?id=' + encodeURIComponent(id)
+            const playApi = (id) => ygBase + '/api/v1/spiders/' + siteKey + '/play?id=' + encodeURIComponent(id)
 
             let r = await this.get(playApi(playParam))
-            let playJson = parseJsonData(r.data)
+            let playJson = ygParseJsonData(r.data)
 
             // ADAPT：后端对无法识别的 id 会把入参**原样回显**。
             // 实测 b8xx6：play?id=<网址> 会原样返回那个网址（于是拿到一个网页地址，播放必然失败），
@@ -585,7 +585,7 @@ class yiguoduanClass extends WebApiBase {
                 const alt = playParam === epTarget ? cleanId : epTarget
                 if (alt && alt !== playParam) {
                     const r2 = await this.get(playApi(alt))
-                    const j2 = parseJsonData(r2.data)
+                    const j2 = ygParseJsonData(r2.data)
                     if (j2 && j2.url && String(j2.url).trim() !== alt) {
                         r = r2
                         playJson = j2
@@ -594,7 +594,7 @@ class yiguoduanClass extends WebApiBase {
             }
 
             let finalUrl = epTarget
-            let headerDict = { 'User-Agent': kUa, Referer: kBase + '/' }
+            let headerDict = { 'User-Agent': ygUa, Referer: ygBase + '/' }
             let needParse = 0
 
             if (playJson) {
@@ -621,11 +621,11 @@ class yiguoduanClass extends WebApiBase {
 
             // 原版：相对路径补齐聚合站域名
             if (finalUrl.indexOf('/api/v1/spiders/') === 0) {
-                finalUrl = kBase + finalUrl
+                finalUrl = ygBase + finalUrl
                 needParse = 0
             }
             // 原版：标准音视频流直接放行
-            if (isVideoUrl(finalUrl) || hasAudioExt(finalUrl)) {
+            if (ygIsVideoUrl(finalUrl) || ygHasAudioExt(finalUrl)) {
                 needParse = 0
             }
 
@@ -633,7 +633,7 @@ class yiguoduanClass extends WebApiBase {
             if (needParse !== 0) {
                 // ADAPT：TVBox 的 parse=1 需要挂解析器，uz 没有这个机制，
                 // 用 uz 的嗅探对象表达（官方多个扩展都是这么处理的）。
-                backData.sniffer = { url: finalUrl, ua: kUa }
+                backData.sniffer = { url: finalUrl, ua: ygUa }
                 backData.data = ''
             } else {
                 backData.data = finalUrl
@@ -664,12 +664,12 @@ class yiguoduanClass extends WebApiBase {
             }
 
             let list = []
-            for (let i = 0; i < kSearchTargets.length; i++) {
-                const skey = kSearchTargets[i]
+            for (let i = 0; i < ygSearchTargets.length; i++) {
+                const skey = ygSearchTargets[i]
                 const url =
-                    kBase + '/api/v1/spiders/' + skey + '/search?wd=' + encodeURIComponent(kw) + '&pg=1'
-                const r = await this.get(url, null, kSearchReceiveTimeout)
-                const data = parseJsonData(r.data)
+                    ygBase + '/api/v1/spiders/' + skey + '/search?wd=' + encodeURIComponent(kw) + '&pg=1'
+                const r = await this.get(url, null, ygSearchReceiveTimeout)
+                const data = ygParseJsonData(r.data)
                 const items = (data && data.list) || []
                 for (let j = 0; j < items.length && j < 4; j++) {
                     const item = items[j] || {}
@@ -681,7 +681,7 @@ class yiguoduanClass extends WebApiBase {
                     model.vod_id = skey + '@@' + vid
                     model.vod_name = '[' + skey.toUpperCase() + '] ' + (item.name || item.vod_name || '')
                     model.vod_pic = this.universalPic(skey, item.pic || item.vod_pic || '')
-                    model.vod_remarks = this.formatRemarks(kBrand, item.remarks || item.vod_remarks || '')
+                    model.vod_remarks = this.formatRemarks(ygBrand, item.remarks || item.vod_remarks || '')
                     list.push(model)
                 }
             }
@@ -698,16 +698,16 @@ class yiguoduanClass extends WebApiBase {
     /** 原版 _get_spiders_for_plat：取某个大类下的站点，短剧按原版优先级排序 */
     platSites(platId) {
         let out = []
-        for (const key in kSites) {
-            const info = kSites[key] || {}
+        for (const key in ygSites) {
+            const info = ygSites[key] || {}
             if (platId === 'all' || info.platform === platId) {
                 out.push(key)
             }
         }
         if (platId === 'short') {
             out.sort(function (a, b) {
-                const ia = kShortPriority.indexOf(a)
-                const ib = kShortPriority.indexOf(b)
+                const ia = ygShortPriority.indexOf(a)
+                const ib = ygShortPriority.indexOf(b)
                 return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
             })
         }
@@ -716,7 +716,7 @@ class yiguoduanClass extends WebApiBase {
 
     /** 取站点的分类列表 */
     catsOf(siteKey) {
-        const info = kSites[siteKey]
+        const info = ygSites[siteKey]
         if (!info) {
             return []
         }
@@ -753,14 +753,14 @@ class yiguoduanClass extends WebApiBase {
         if (pic.indexOf('//') === 0) {
             pic = 'https:' + pic
         } else if (pic.indexOf('/') === 0 && pic.indexOf('/api/') !== 0) {
-            pic = kBase + pic
+            pic = ygBase + pic
         }
-        for (let i = 0; i < kDirectPicHosts.length; i++) {
-            if (pic.indexOf(kDirectPicHosts[i]) !== -1) {
+        for (let i = 0; i < ygDirectPicHosts.length; i++) {
+            if (pic.indexOf(ygDirectPicHosts[i]) !== -1) {
                 return pic
             }
         }
-        return kBase + '/api/v1/spiders/' + siteKey + '/proxy?type=img&url=' + encodeURIComponent(pic)
+        return ygBase + '/api/v1/spiders/' + siteKey + '/proxy?type=img&url=' + encodeURIComponent(pic)
     }
 
     /** 原版 _format_remarks */
@@ -776,7 +776,7 @@ class yiguoduanClass extends WebApiBase {
         try {
             const options = {
                 headers: Object.assign(
-                    { 'User-Agent': kUa, Referer: kBase + '/', Accept: '*/*' },
+                    { 'User-Agent': ygUa, Referer: ygBase + '/', Accept: '*/*' },
                     extraHeaders || {}
                 ),
             }
@@ -791,4 +791,4 @@ class yiguoduanClass extends WebApiBase {
     }
 }
 
-var yiguoduan2026 = new yiguoduanClass()
+var yiguoduan2026 = new ygYiguoduanClass()
