@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] 蝴蝶·BestJavPorn
-//@version:2
+//@version:3
 //@webSite:https://bestjavporn.me
-//@remark:7 分类 · 列表 → 详情页 rocketlazyload → /xx/ 嵌入页 pox+dp；播放时实时 AES-256-CBC 解密直出 m3u8（详情不落 token，防过期）；v2 让请求失败的原因直接显示出来（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）
+//@remark:7 分类 · 列表 → 详情页 rocketlazyload → /xx/ 嵌入页 pox+dp；播放时实时 AES-256-CBC 解密直出 m3u8（详情不落 token，防过期）；v2 失败原因可见（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）；v3 顶层变量全部加 bj 前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
 //@type:100
 //@instance:bestjav2026
 //@isAV:1
@@ -56,7 +56,7 @@ import {} from '../../core/uzUtils.js'
 //   A4  空结果 / 越界页：原版把「Nothing found」页和「Page not found」页当普通列表页解析。
 //       实测这两页各自都带 20 条「Random videos」——于是搜索无结果会返回 20 条完全不相干
 //       的视频；翻过最后一页之后还会一直有内容，永远翻不完。这里识别出来返回空列表。
-//       （关掉：把 kGuardEmptyPage 改成 false。）
+//       （关掉：把 bjGuardEmptyPage 改成 false。）
 //   A5  去掉 _wrap_img 的 `@Referer=…@User-Agent=…` 后缀。那是 TVBox 的私有语法，
 //       uz 会当成 URL 的一部分 → 图必 404。实测该图床 http/https 直连都 200、且不校验
 //       Referer，所以本来也不需要这个后缀。
@@ -94,24 +94,37 @@ import {} from '../../core/uzUtils.js'
 //       所以这是有依据的兜底尝试，不是保证有效。为此把 403 也纳入重试 —— v1 遇到 403 直接
 //       返回，等于把这条兜底路径自己关掉了。成功路径的逻辑与正文解析一律没动。
 //   B5  详情页请求失败时不再返回「空壳详情」（v1 会给出标题=正片详情、封面空、点播放必失败）。
+//
+// ----------------------------------------------------------------------------
+// v3 新增（真机报「SyntaxError: redeclaration of 'kUa' at <eval>」后做的修复）
+//
+// 机制：uz 会把**一个订阅里的所有扩展依次放进同一个 JS 作用域** eval。于是任何两个扩展
+// 共享顶层 const/let 名字，后加载的那个就直接 SyntaxError、整个扩展不可用 —— 用户看到
+// 的就是「订阅里只有某一个源能打开，其他都显示扩展错误」。本文件原来的 kUa / kTgGroup /
+// kBrand / gSite / cleanText / absUrl 等通用名，和同订阅里其他源撞了。
+//
+//   C1  所有顶层通用名统一加 `bj` 前缀，不再可能与任何其他扩展撞名。
+//       只改名字、逻辑一行未动 —— 已用「改前/改后 7 个公开方法输出逐字节比对」证明行为一致。
+//   C2  特地保留类名 `bestjavClass` 与实例名 `bestjav2026`（后者被订阅的 instance 字段
+//       引用，改了就对不上了）。
 // ----------------------------------------------------------------------------
 
 /**
  * 站点地址（原 py 的 self.siteUrl）。仅允许在 getClassList 里被 @webSite 覆盖，见 A9。
  */
-let gSite = 'https://bestjavporn.me'
+let bjSite = 'https://bestjavporn.me'
 
-const kUa =
+const bjUa =
     'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-const kTgGroup = 'https://t.me/tvshare23'
-const kBrand = '蝴蝶影视'
-const kBrandActor = '🦋 TG群: @tvshare23'
-const kBrandDirector = '🦋 蝴蝶影视'
-const kPlayFrom = '蝴蝶专线'
-const kEpisodeName = '超清正片'
+const bjTgGroup = 'https://t.me/tvshare23'
+const bjBrand = '蝴蝶影视'
+const bjBrandActor = '🦋 TG群: @tvshare23'
+const bjBrandDirector = '🦋 蝴蝶影视'
+const bjPlayFrom = '蝴蝶专线'
+const bjEpisodeName = '超清正片'
 
 /** 原 py homeContent 的 7 个分类，顺序与 type_id 原样 */
-const kClasses = [
+const bjClasses = [
     { id: 'censored', name: '有码专区' },
     { id: 'amateur', name: '素人专区' },
     { id: 'reducing-mosaic', name: '去码专区' },
@@ -122,7 +135,7 @@ const kClasses = [
 ]
 
 /** 原 py categoryContent 的 route 表，逐条照抄 */
-const kRoute = {
+const bjRoute = {
     censored: '/category/censored/',
     amateur: '/category/amateur/',
     'reducing-mosaic': '/category/reducing-mosaic/',
@@ -133,26 +146,26 @@ const kRoute = {
 }
 
 /** A4 的开关 */
-const kGuardEmptyPage = true
+const bjGuardEmptyPage = true
 
 /**
  * B3：单次请求的超时（毫秒）。真机 req 的默认是 30000，原版又要试 2 次，
  * 站点不通时用户要干等 60 秒才看到「空列表」。这里压到 10 秒。
  * 取值理由见文件头 B3：这个数在毫秒/秒两种读法下都不会比现状更差。
  */
-const kTimeoutMs = 10000
+const bjTimeoutMs = 10000
 
 /** Cloudflare 挑战页的体量上限：真站正常页面 58–85KB，挑战页约 5.7KB（2026-09 实测） */
-const kChallengeMaxLen = 30000
+const bjChallengeMaxLen = 30000
 
 // ============================================================================
 // 工具函数
 // ============================================================================
 
 /** 原 py _clean_text：去标签 + 空白折叠（A7 额外做实体解码） */
-function cleanText(raw) {
+function bjCleanText(raw) {
     const t = String(raw == null ? '' : raw).replace(/<[^>]+>/g, '')
-    return htmlDecode(t)
+    return bjHtmlDecode(t)
         .replace(/[\r\n\t\s]+/g, ' ')
         .trim()
 }
@@ -161,11 +174,11 @@ function cleanText(raw) {
  * A7：还原 HTML 实体。站点把 `&#8217;` 这类实体直接写在 title 属性里，
  * 只做解释，不做任何反向操作。
  */
-function htmlDecode(s) {
+function bjHtmlDecode(s) {
     if (!s || s.indexOf('&') === -1) return s
     return String(s)
-        .replace(/&#x([0-9a-f]+);/gi, (m, h) => safeCodePoint(parseInt(h, 16)))
-        .replace(/&#(\d+);/g, (m, d) => safeCodePoint(parseInt(d, 10)))
+        .replace(/&#x([0-9a-f]+);/gi, (m, h) => bjSafeCodePoint(parseInt(h, 16)))
+        .replace(/&#(\d+);/g, (m, d) => bjSafeCodePoint(parseInt(d, 10)))
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
@@ -181,7 +194,7 @@ function htmlDecode(s) {
         .replace(/&middot;/g, '·')
         .replace(/&amp;/g, '&')
 }
-function safeCodePoint(code) {
+function bjSafeCodePoint(code) {
     try {
         if (!isFinite(code) || code < 0 || code > 0x10ffff) return ''
         return String.fromCodePoint(code)
@@ -191,7 +204,7 @@ function safeCodePoint(code) {
 }
 
 /** 原 py format_remarks */
-function formatRemarks(brand, meta) {
+function bjFormatRemarks(brand, meta) {
     const cleanMeta = String(meta == null ? '' : meta)
         .replace(/[\r\n\t]+/g, ' ')
         .trim()
@@ -200,41 +213,41 @@ function formatRemarks(brand, meta) {
 }
 
 /** 等价于 Python urllib.parse.quote(s)（默认 safe='/'）——原 py 的 quote(str(key).strip()) */
-function pyQuote(s) {
+function bjPyQuote(s) {
     return encodeURIComponent(String(s == null ? '' : s))
         .replace(/%2F/gi, '/')
         .replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
 }
 
 /** 等价于原 py 的 urljoin(self.siteUrl, href) 在本站场景下的行为 */
-function absUrl(href) {
+function bjAbsUrl(href) {
     const h = String(href == null ? '' : href).trim()
     if (!h) return ''
     if (h.indexOf('http') === 0) return h
     if (h.indexOf('//') === 0) return 'https:' + h
-    if (h.charAt(0) === '/') return gSite + h
-    return gSite + '/' + h
+    if (h.charAt(0) === '/') return bjSite + h
+    return bjSite + '/' + h
 }
 
 /** 把 `http://` 升级成 `https://`（原 py 在多处做同样处理） */
-function toHttps(u) {
+function bjToHttps(u) {
     const s = String(u == null ? '' : u)
     if (s.indexOf('http://') === 0) return 'https://' + s.slice(7)
     return s
 }
 
-function toInt(v, dft) {
+function bjToInt(v, dft) {
     const n = parseInt(String(v == null ? '' : v).replace(/[^\d-]/g, ''), 10)
     return isFinite(n) ? n : dft
 }
 
 /** 用真机同款 CryptoJS 解 base64（只用于 ASCII/UTF-8 文本） */
-function decodeBase64Utf8(b64) {
+function bjDecodeBase64Utf8(b64) {
     return Crypto.enc.Utf8.stringify(Crypto.enc.Base64.parse(b64))
 }
 
 /** 剥 PKCS7 填充：原 py 是 `if 1 <= pad <= 16: out = out[:-pad]`，这里逐字对齐 */
-function stripPkcs7(text) {
+function bjStripPkcs7(text) {
     const s = String(text == null ? '' : text)
     if (!s) return ''
     let end = s.length
@@ -254,7 +267,7 @@ function stripPkcs7(text) {
  */
 function bestjavAesDecrypt(pox, dpB64) {
     try {
-        const dataJson = decodeBase64Utf8(dpB64)
+        const dataJson = bjDecodeBase64Utf8(dpB64)
         const d = JSON.parse(dataJson)
         // 原 py 有 `.replace("\\/", "/")`；JS 里 JSON.parse 已经还原过 `\/`，这里是幂等的兜底
         const ct = String(d.ct).replace(/\\\//g, '/')
@@ -286,7 +299,7 @@ function bestjavAesDecrypt(pox, dpB64) {
         } catch (e) {
             return ''
         }
-        return stripPkcs7(out)
+        return bjStripPkcs7(out)
             .trim()
             .replace(/^"|"$/g, '')
             .replace(/\\\//g, '/')
@@ -296,7 +309,7 @@ function bestjavAesDecrypt(pox, dpB64) {
 }
 
 /** `P0DT1H52M0S` → `01:52:00`（只用于介绍文案） */
-function isoDurationToClock(iso) {
+function bjIsoDurationToClock(iso) {
     const m = String(iso || '').match(/^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i)
     if (!m) return ''
     const d = parseInt(m[1] || '0', 10)
@@ -315,17 +328,17 @@ function isoDurationToClock(iso) {
 class bestjavClass extends WebApiBase {
     constructor() {
         super()
-        this.kUa = kUa
+        this.bjUa = bjUa
         // 原 py _fetch 的默认头（Accept-Encoding 与 Connection 交给 App 自己的网络栈，
         // 不照抄 —— 手写 Accept-Encoding 可能让原生请求返回未解压的裸字节）
-        this.kHeaders = {
-            'User-Agent': kUa,
+        this.bjHeaders = {
+            'User-Agent': bjUa,
             Accept: '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         }
         // B4：第 2 次尝试用的「更像浏览器」的头（首轮失败后才会用到，成功路径不受影响）
-        this.kBrowserHeaders = {
-            'User-Agent': kUa,
+        this.bjBrowserHeaders = {
+            'User-Agent': bjUa,
             Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Upgrade-Insecure-Requests': '1',
@@ -348,13 +361,13 @@ class bestjavClass extends WebApiBase {
         try {
             // A9：只在分类这一步接受 App 里配置的站点地址覆盖
             const u = String((args && args.url) || '').trim()
-            if (u.indexOf('http') === 0) gSite = u.replace(/\/+$/, '')
+            if (u.indexOf('http') === 0) bjSite = u.replace(/\/+$/, '')
 
             const list = []
-            for (let i = 0; i < kClasses.length; i++) {
+            for (let i = 0; i < bjClasses.length; i++) {
                 const videoClass = new VideoClass()
-                videoClass.type_id = kClasses[i].id
-                videoClass.type_name = kClasses[i].name
+                videoClass.type_id = bjClasses[i].id
+                videoClass.type_name = bjClasses[i].name
                 // 本站没有二级分类，也没有筛选面板
                 videoClass.hasSubclass = false
                 list.push(videoClass)
@@ -395,7 +408,7 @@ class bestjavClass extends WebApiBase {
         const backData = new RepVideoList()
         try {
             const tid = String((args && args.url) || '').trim()
-            const page = toInt(args && args.page, 1) || 1
+            const page = bjToInt(args && args.page, 1) || 1
             const r = await this.listAt(tid, page)
             backData.data = r.list
             backData.total = r.total
@@ -412,7 +425,7 @@ class bestjavClass extends WebApiBase {
         const backData = new RepVideoList()
         try {
             const mainId = String((args && args.mainClassId) || (args && args.url) || '').trim()
-            const page = toInt(args && args.page, 1) || 1
+            const page = bjToInt(args && args.page, 1) || 1
             const r = await this.listAt(mainId, page)
             backData.data = r.list
             backData.total = r.total
@@ -434,7 +447,7 @@ class bestjavClass extends WebApiBase {
         const backData = new RepVideoDetail()
         try {
             const raw = String((args && args.url) || '').trim()
-            const targetUrl = absUrl(raw)
+            const targetUrl = bjAbsUrl(raw)
             if (!targetUrl) {
                 backData.error = '详情地址为空'
                 return JSON.stringify(backData)
@@ -459,10 +472,10 @@ class bestjavClass extends WebApiBase {
             // 原 py：<h1> 优先，退 itemprop="name"
             let title = ''
             const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
-            if (h1) title = cleanText(h1[1])
+            if (h1) title = bjCleanText(h1[1])
             if (!title) {
                 const n2 = html.match(/itemprop="name"\s+content="([^"]+)"/i)
-                if (n2) title = cleanText(n2[1])
+                if (n2) title = bjCleanText(n2[1])
             }
             if (!title) title = '正片详情'
 
@@ -474,7 +487,7 @@ class bestjavClass extends WebApiBase {
             // A8：模板与原版逐字一致，只是不再做 HTML 转义
             const intro =
                 '【🔥 蝴蝶影视交流群: ' +
-                kTgGroup +
+                bjTgGroup +
                 '】\n' +
                 '• 影片标题: ' +
                 title +
@@ -488,12 +501,12 @@ class bestjavClass extends WebApiBase {
             v.vod_id = targetUrl
             v.vod_name = title
             v.vod_pic = cover
-            v.vod_actor = kBrandActor
-            v.vod_director = kBrandDirector
-            v.vod_remarks = kBrand
+            v.vod_actor = bjBrandActor
+            v.vod_director = bjBrandDirector
+            v.vod_remarks = bjBrand
             v.vod_content = intro
-            v.vod_play_from = kPlayFrom
-            v.vod_play_url = kEpisodeName + '$' + finalDeliver
+            v.vod_play_from = bjPlayFrom
+            v.vod_play_url = bjEpisodeName + '$' + finalDeliver
             backData.data = v
         } catch (error) {
             backData.error = '获取详情失败～' + error.message
@@ -539,9 +552,9 @@ class bestjavClass extends WebApiBase {
 
             // 原 py playerContent 的固定头
             const headers = {
-                'User-Agent': kUa,
-                Referer: gSite + '/',
-                Origin: gSite,
+                'User-Agent': bjUa,
+                Referer: bjSite + '/',
+                Origin: bjSite,
                 Accept: '*/*',
             }
 
@@ -570,8 +583,8 @@ class bestjavClass extends WebApiBase {
     async searchVideo(args) {
         const backData = new RepVideoList()
         try {
-            const page = toInt(args && args.page, 1) || 1
-            const q = pyQuote(String((args && args.searchWord) || '').trim())
+            const page = bjToInt(args && args.page, 1) || 1
+            const q = bjPyQuote(String((args && args.searchWord) || '').trim())
             const path = page > 1 ? '/page/' + page + '/?s=' + q : '/?s=' + q
             const r = await this.listAt(path, page)
             backData.data = r.list
@@ -595,11 +608,11 @@ class bestjavClass extends WebApiBase {
         let base
         if (t.indexOf('http') === 0 || t.charAt(0) === '/' || t.indexOf('?s=') === 0) {
             if (t.indexOf('http') === 0) base = t
-            else base = gSite + (t.charAt(0) === '/' ? t : '/' + t) // A10
-        } else if (kRoute[t]) {
-            base = gSite + kRoute[t]
+            else base = bjSite + (t.charAt(0) === '/' ? t : '/' + t) // A10
+        } else if (bjRoute[t]) {
+            base = bjSite + bjRoute[t]
         } else {
-            base = gSite + '/category/censored/'
+            base = bjSite + '/category/censored/'
         }
         if (page > 1) {
             if (base.indexOf('filter=') !== -1 || base.indexOf('?s=') !== -1) {
@@ -636,7 +649,7 @@ class bestjavClass extends WebApiBase {
             return { list: [], total: 0, url: url, error: this.describeFailure(res.code, res.error, html) }
         }
 
-        if (kGuardEmptyPage && this.isEmptyResultPage(html, page)) {
+        if (bjGuardEmptyPage && this.isEmptyResultPage(html, page)) {
             return { list: [], total: 0, url: url, error: '' } // A4：这是真的空结果
         }
         const r = this.parseListHtml(html, page)
@@ -676,7 +689,7 @@ class bestjavClass extends WebApiBase {
             let title = ''
             if (linkM) {
                 href = String(linkM[1]).trim()
-                title = cleanText(linkM[2])
+                title = bjCleanText(linkM[2])
             } else {
                 linkM = chunk.match(/<a[^>]+href=["']([^"']+)["']/i)
                 if (!linkM) continue
@@ -684,21 +697,21 @@ class bestjavClass extends WebApiBase {
             }
             if (!title) {
                 const t2 = chunk.match(/<header[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i)
-                if (t2) title = cleanText(t2[1])
+                if (t2) title = bjCleanText(t2[1])
             }
             if (!href || href.indexOf('javascript:') === 0) continue
-            const fullHref = absUrl(href)
+            const fullHref = bjAbsUrl(href)
 
             const pic = this.wrapImg(this.extractImg(chunk))
             let durM = chunk.match(/class="duration"[^>]*>[\s\S]*?<\/i>\s*([0-9:]+)/i)
             if (!durM) durM = chunk.match(/duration[^>]*>[\s\S]*?([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)/i)
-            const duration = durM ? cleanText(durM[1]) : ''
+            const duration = durM ? bjCleanText(durM[1]) : ''
 
             const v = new VideoDetail()
             v.vod_id = fullHref
             v.vod_name = title || '未知片目'
             v.vod_pic = pic
-            v.vod_remarks = formatRemarks(kBrand, duration)
+            v.vod_remarks = bjFormatRemarks(bjBrand, duration)
             list.push(v)
         }
 
@@ -723,7 +736,7 @@ class bestjavClass extends WebApiBase {
             if (m) {
                 let val = String(m[1]).trim()
                 if (val && val.indexOf('data:') !== 0 && val.indexOf('svg') === -1) {
-                    val = toHttps(absUrl(val))
+                    val = bjToHttps(bjAbsUrl(val))
                     return val
                 }
             }
@@ -734,7 +747,7 @@ class bestjavClass extends WebApiBase {
     /** 原 py _wrap_img，但去掉 TVBox 专有的 @Referer=/@User-Agent= 后缀（A5） */
     wrapImg(imgUrl) {
         if (!imgUrl) return ''
-        return toHttps(absUrl(imgUrl))
+        return bjToHttps(bjAbsUrl(imgUrl))
     }
 
     /** A2：详情页封面。优先级：og:image → twitter:image → itemprop="thumbnailUrl" → 原逻辑 */
@@ -757,11 +770,11 @@ class bestjavClass extends WebApiBase {
     detailDuration(html) {
         const iso = html.match(/<meta[^>]+itemprop=["']duration["'][^>]+content=["']([^"']+)["']/i)
         if (iso) {
-            const c = isoDurationToClock(iso[1])
+            const c = bjIsoDurationToClock(iso[1])
             if (c) return c
         }
         const d = html.match(/Duration:\s*([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)/i)
-        if (d) return cleanText(d[1])
+        if (d) return bjCleanText(d[1])
         return ''
     }
 
@@ -825,15 +838,15 @@ class bestjavClass extends WebApiBase {
         const m = html.match(/data-rocketlazyloadscript=['"]data:text\/javascript;base64,([A-Za-z0-9+/=]+)['"]/)
         if (m) {
             try {
-                const js = decodeBase64Utf8(m[1])
+                const js = bjDecodeBase64Utf8(m[1])
                 const um = js.match(/defaultUrl\s*=\s*["']([^"']+)["']/)
-                if (um) return toHttps(um[1])
+                if (um) return bjToHttps(um[1])
             } catch (e) {
                 // 载荷解不开就走下面的兜底
             }
         }
         const m2 = html.match(/(https?:\/\/[^"'\s]+\/xx\/[A-Za-z0-9]+)/)
-        if (m2) return toHttps(m2[1])
+        if (m2) return bjToHttps(m2[1])
         return ''
     }
 
@@ -843,7 +856,7 @@ class bestjavClass extends WebApiBase {
      */
     async preferMediaPlaylist(masterUrl) {
         if (!masterUrl || masterUrl.indexOf('master.m3u8') === -1) return masterUrl
-        const res = await this.get(masterUrl, gSite + '/')
+        const res = await this.get(masterUrl, bjSite + '/')
         const text = res.text || ''
         if (!text || text.indexOf('#EXTM3U') === -1) return masterUrl
 
@@ -876,11 +889,11 @@ class bestjavClass extends WebApiBase {
      * 拼请求头。attempt=0 用原 py 的默认头；attempt>0 换「更像浏览器」的一套（B4）
      */
     headersFor(browserLike, referer) {
-        const base = browserLike ? this.kBrowserHeaders : this.kHeaders
+        const base = browserLike ? this.bjBrowserHeaders : this.bjHeaders
         const headers = {}
         const keys = Object.keys(base)
         for (let i = 0; i < keys.length; i++) headers[keys[i]] = base[keys[i]]
-        headers.Referer = referer || gSite + '/'
+        headers.Referer = referer || bjSite + '/'
         return headers
     }
 
@@ -888,8 +901,8 @@ class bestjavClass extends WebApiBase {
     buildReqOptions(attempt, referer) {
         const options = {
             headers: this.headersFor(attempt > 0, referer),
-            sendTimeout: kTimeoutMs,
-            receiveTimeout: kTimeoutMs,
+            sendTimeout: bjTimeoutMs,
+            receiveTimeout: bjTimeoutMs,
         }
         // B4：第 2 次不强制 HTTP2 —— 同一 URL 换请求特征实测会得到不同结果
         if (attempt > 0) options.useHttp2 = false
@@ -913,7 +926,7 @@ class bestjavClass extends WebApiBase {
      */
     isCloudflareChallenge(html) {
         const s = String(html == null ? '' : html)
-        if (!s || s.length > kChallengeMaxLen) return false
+        if (!s || s.length > bjChallengeMaxLen) return false
         if (/<title>\s*(Just a moment|Attention Required)/i.test(s)) return true
         if (s.indexOf('cf_chl_') !== -1 || s.indexOf('__cf_chl') !== -1) return true
         if (s.indexOf('Checking your browser before accessing') !== -1) return true
@@ -941,7 +954,7 @@ class bestjavClass extends WebApiBase {
         }
         if (code === 403) return '站点返回 403（拒绝访问），可能是屏蔽了当前网络/地区，或触发了人机验证'
         if (code === 429) return '站点返回 429（请求太频繁），请稍后重试'
-        if (code === 408) return '请求超时（' + kTimeoutMs + ' 毫秒内没有响应）'
+        if (code === 408) return '请求超时（' + bjTimeoutMs + ' 毫秒内没有响应）'
         if (code === 404) return '站点返回 404（页面不存在）'
         if (!(code > 0)) return '网络请求失败' + this.errTail(error) + ' —— 站点可能被网络阻断，需要代理'
         if (code >= 500 && error) return '网络请求失败' + this.errTail(error) + ' —— 站点可能被网络阻断，需要代理'
@@ -961,7 +974,7 @@ class bestjavClass extends WebApiBase {
      *          error / ct 是 v2 新增的附带信息（B1），成功路径的返回内容与 v1 相同
      */
     async get(url, referer) {
-        const target = absUrl(url)
+        const target = bjAbsUrl(url)
         if (!target) return { code: 0, text: '', error: '地址为空', ct: '' }
 
         let out = { code: -1, text: '', error: '', ct: '' }
