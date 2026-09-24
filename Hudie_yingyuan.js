@@ -532,8 +532,14 @@ class hudieYingYuanClass extends WebApiBase {
                     ...this.kHeaders,
                     Referer: referer || this.curSite() + '/',
                 },
-                sendTimeout: 12000,
-                receiveTimeout: 12000,
+                // 原 py 的 _fetch 用的是 timeout=10（秒）。
+                // uz 这两个参数的单位存疑：core/core/uzUtils.js 里那段调试实现是直接
+                // 交给 setTimeout（毫秒，默认 30000），但真机走的是原生桥 sendMessage('req')，
+                // 而全库唯一一处官方用法 receiveTimeout: 40 只有读作「40 秒」才合理。
+                // 这里取 10000：毫秒语义下正好等于原 py 的 10 秒；秒语义下与不传无实质差别
+                // （原来写的 12000 在毫秒语义下其实也没问题，只是与上面那句“原 py 10 秒”不一致）。
+                sendTimeout: 10000,
+                receiveTimeout: 10000,
             })
             return { code: p.code, data: p.data || '', error: p.error || '' }
         } catch (e) {
