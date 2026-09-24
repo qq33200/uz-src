@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] GetAV
-//@version:2
+//@version:3
 //@webSite:https://getav.net
-//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。
+//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
 //@type:100
 //@instance:getav2026
 //@isAV:1
@@ -17,7 +17,7 @@ import { } from '../../core/uzUtils.js'
  * GetAV 官方发布页（getav.info）公布的 5 个入口，顺序即优先级。
  * 任一域名可用就会被记住，后续请求都用它；全部失败才会重新探测。
  */
-const kDomains = [
+const gaDomains = [
     'https://getav.net',
     'https://getav.me',
     'https://getav.live',
@@ -26,17 +26,17 @@ const kDomains = [
 ]
 
 /** 封面 / 头像 / 片源所在的静态站 */
-const kStaticHost = 'https://static.worldstatic.com'
+const gaStaticHost = 'https://static.worldstatic.com'
 
 /** 演员大全默认取哪个性别：2=女优 1=男优（改这里即可） */
-const kStarGender = '2'
+const gaStarGender = '2'
 
 /** 演员/类型/片商/番号 二级列表每页取多少条 */
-const kFolderLimit = 100
+const gaFolderLimit = 100
 
-const kTgGroup = 'https://t.me/tvshare23'
+const gaTgGroup = 'https://t.me/tvshare23'
 
-const kUa =
+const gaUa =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
 /**
@@ -48,7 +48,7 @@ const kUa =
  * 所以**绝对不能无条件 `JSON.parse(pro.data)`**，那会在真机上直接抛 "Unexpected token o"。
  * 官方扩展也是这么兼容的，见 panTools2.js: `typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data`
  */
-function parseJsonData(d) {
+function gaParseJsonData(d) {
     if (d === null || d === undefined || d === '') {
         return null
     }
@@ -66,17 +66,17 @@ function parseJsonData(d) {
 }
 
 /** 把 req 的返回值安全地取成文本 */
-function asText(d) {
+function gaAsText(d) {
     return typeof d === 'string' ? d : ''
 }
 
 /** 从 URL 里取「协议+域名」 */
-function originOf(url) {
+function gaOriginOf(url) {
     const m = String(url || '').match(/^(https?:\/\/[^\/]+)/i)
     return m ? m[1] : ''
 }
 
-class getavClass extends WebApiBase {
+class gaGetavClass extends WebApiBase {
     constructor() {
         super()
         // 自愈到可用域名后记在这里，后续请求都用它
@@ -262,7 +262,7 @@ class getavClass extends WebApiBase {
             const dateStr = String(data.date || '')
             const fullContent =
                 '【🔥 官方交流群: ' +
-                kTgGroup +
+                gaTgGroup +
                 '】\n【当前线路: ' +
                 this.curHost() +
                 '】\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
@@ -316,7 +316,7 @@ class getavClass extends WebApiBase {
                 return JSON.stringify(backData)
             }
             backData.headers = {
-                'User-Agent': kUa,
+                'User-Agent': gaUa,
                 Referer: this.curHost() + '/',
                 Origin: this.curHost(),
             }
@@ -403,17 +403,17 @@ class getavClass extends WebApiBase {
     async folderSubclasses(folderType) {
         let path = ''
         if (folderType === 'genres') {
-            path = '/api/genres?limit=' + kFolderLimit + '&sort=popular&locale=zh-CN'
+            path = '/api/genres?limit=' + gaFolderLimit + '&sort=popular&locale=zh-CN'
         } else if (folderType === 'studios') {
-            path = '/api/studios?limit=' + kFolderLimit + '&sort=popular&locale=zh-CN'
+            path = '/api/studios?limit=' + gaFolderLimit + '&sort=popular&locale=zh-CN'
         } else if (folderType === 'codes') {
-            path = '/api/codes?limit=' + kFolderLimit + '&sort=popular&locale=zh-CN'
+            path = '/api/codes?limit=' + gaFolderLimit + '&sort=popular&locale=zh-CN'
         } else if (folderType === 'stars') {
             path =
                 '/api/stars?page=1&limit=' +
-                kFolderLimit +
+                gaFolderLimit +
                 '&sort=popular&locale=zh&gender=' +
-                kStarGender
+                gaStarGender
         } else {
             return []
         }
@@ -535,7 +535,7 @@ class getavClass extends WebApiBase {
         let lines = items.map((x) => x.line)
         const pv = String(data.previewVideoUrl || '').trim()
         if (pv) {
-            lines.push(['精彩预告', /^https?:\/\//i.test(pv) ? pv : kStaticHost + pv])
+            lines.push(['精彩预告', /^https?:\/\//i.test(pv) ? pv : gaStaticHost + pv])
         }
         return lines
     }
@@ -611,11 +611,11 @@ class getavClass extends WebApiBase {
         }
         const h = this.hostOf(this.webSite)
         const i = h ? this._indexOfDomain(h) : -1
-        return i === -1 ? kDomains[0] : this._domains()[i]
+        return i === -1 ? gaDomains[0] : this._domains()[i]
     }
 
     _domains() {
-        return this._domainOrder || kDomains
+        return this._domainOrder || gaDomains
     }
 
     _indexOfDomain(host) {
@@ -651,7 +651,7 @@ class getavClass extends WebApiBase {
         for (let i = 0; i < ds.length; i++) {
             const r = await this.get(ds[i] + path)
             last = r
-            const json = parseJsonData(r.data)
+            const json = gaParseJsonData(r.data)
             if (json) {
                 this._healedHost = ds[i]
                 return { json: json, error: '' }
@@ -661,11 +661,11 @@ class getavClass extends WebApiBase {
     }
 
     async get(url) {
-        const origin = originOf(url) || this.curHost()
+        const origin = gaOriginOf(url) || this.curHost()
         try {
             const p = await req(url, {
                 headers: {
-                    'User-Agent': kUa,
+                    'User-Agent': gaUa,
                     Accept: 'application/json, text/plain, */*',
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
                     Origin: origin,
@@ -685,7 +685,7 @@ class getavClass extends WebApiBase {
         if (!r) {
             return '网络请求失败，请稍后重试'
         }
-        const body = asText(r.data)
+        const body = gaAsText(r.data)
         if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
             return '被 Cloudflare 人机验证拦了（请求太密），等几分钟再试或换个分类'
         }
@@ -721,7 +721,7 @@ class getavClass extends WebApiBase {
         if (s.indexOf('//') === 0) {
             return 'https:' + s
         }
-        return kStaticHost + (s.indexOf('/') === 0 ? s : '/' + s)
+        return gaStaticHost + (s.indexOf('/') === 0 ? s : '/' + s)
     }
 
     cleanText(raw) {
@@ -768,4 +768,4 @@ class getavClass extends WebApiBase {
     }
 }
 
-var getav2026 = new getavClass()
+var getav2026 = new gaGetavClass()
