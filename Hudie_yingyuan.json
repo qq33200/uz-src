@@ -1,8 +1,8 @@
 [
   {
     "name": "[禁] 蝴蝶影院",
-    "version": 1,
-    "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选",
+    "version": 2,
+    "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选。v2 修正请求超时参数",
     "webSite": "https://ptt01.com",
     "instance": "hudieyingyuan2026",
     "order": "E",
