@@ -1,0 +1,11 @@
+[
+  {
+    "name": "凤梨音乐",
+    "version": 1,
+    "remark": "flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。",
+    "webSite": "https://www.flmp3.pro",
+    "order": "G",
+    "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/FengliMusic.js",
+    "type": 101
+  }
+]
