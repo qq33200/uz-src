@@ -62,8 +62,8 @@
     },
     {
       "name": "凤梨音乐",
-      "version": 1,
-      "remark": "flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。",
+      "version": 2,
+      "remark": "flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。v2 修正：// ignore 标记补齐成对（原先为奇数，真机会把整个实现代码当忽略块丢掉，表现为「执行扩展错误」）。",
       "webSite": "https://www.flmp3.pro",
       "order": "G",
       "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/FengliMusic.js",
@@ -71,8 +71,8 @@
     },
     {
       "name": "MoboReels 畅读热剧",
-      "version": 1,
-      "remark": "竖屏短剧站（Nuxt SSR）。30 个题材分类 + 站内搜索；剧集数据内联在页面的 window.__NUXT__ 里，直接求值取用。⚠️ 详情/播放链路未能在开发机上验证：本机（Node/curl）请求详情页会被站点 WAF 降级成不含剧集数据的精简版，分类页/搜索页则正常（已实测）。真机是 Flutter 原生请求栈，通常能拿到完整版；若详情页报错，请把提示原文反馈。",
+      "version": 2,
+      "remark": "竖屏短剧站（Nuxt SSR）。30 个题材分类 + 站内搜索；剧集数据内联在页面的 window.__NUXT__ 里，直接求值取用。v2 修正：// ignore 标记补齐成对（原先为奇数，真机会把整个实现代码当忽略块丢掉，表现为「执行扩展错误」）。⚠️ 详情/播放链路未能在开发机上验证：本机（Node/curl）请求详情页会被站点 WAF 降级成不含剧集数据的精简版，分类页/搜索页则正常（已实测）。真机是 Flutter 原生请求栈，通常能拿到完整版；若详情页报错，请把提示原文反馈。",
       "webSite": "https://www.moboreels.com/cn/",
       "order": "H",
       "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/MoboReels.js",
