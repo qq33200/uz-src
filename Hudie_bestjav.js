@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] 蝴蝶·BestJavPorn
-//@version:1
+//@version:2
 //@webSite:https://bestjavporn.me
-//@remark:7 分类 · 列表 → 详情页 rocketlazyload → /xx/ 嵌入页 pox+dp；播放时实时 AES-256-CBC 解密直出 m3u8（详情不落 token，防过期）
+//@remark:7 分类 · 列表 → 详情页 rocketlazyload → /xx/ 嵌入页 pox+dp；播放时实时 AES-256-CBC 解密直出 m3u8（详情不落 token，防过期）；v2 让请求失败的原因直接显示出来（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）
 //@type:100
 //@instance:bestjav2026
 //@isAV:1
@@ -72,7 +72,29 @@ import {} from '../../core/uzUtils.js'
 //   A10 buildListUrl 里 tid 是 `?s=xxx` 这种「只有查询串」时补一个 `/`。原版会拼出
 //       `https://站点?s=xxx`（少了路径分隔符）。原版的 searchContent 永远带前导 `/`，
 //       所以这条分支在原版里从来走不到，属于潜藏缺陷，这里顺手补正。
-// ============================================================================
+//
+// ----------------------------------------------------------------------------
+// v2 新增（真机反馈「只显示标签页、视频数据没有获取到」后做的加固）
+//
+// 症状成因：getClassList 是纯本地拼的 7 个分类，不发请求，所以标签页一定显示得出来；
+// 而 getVideoList 要真的去请求站点。一旦请求失败，v1 会把失败**静默**吞成空列表 ——
+// 用户看到的就是「标签页在、列表空」，且没有任何原因提示。
+//
+//   B1  把失败原因带出来：req 的 HTTP 状态码 / 错误消息 / 是否 Cloudflare 挑战页，
+//       统统翻译成人话填进 backData.error，App 会直接显示。列表为空和网络失败从此可区分。
+//   B2  识别 Cloudflare 挑战页（`Just a moment...` / `cf_chl_` / `Attention Required`），
+//       给单独文案。站点挂在 Cloudflare 后面（bestjavporn.com 实测 403 + 挑战页）。
+//   B3  显式传超时（sendTimeout/receiveTimeout = 10000）。真机 req 的默认是 30 秒，
+//       再叠加原版「试 2 次」= 用户要干等 60 秒。10000 在毫秒读法下是 10 秒（贴合原 py
+//       的 timeout=10）；万一原生是按「秒」读，那就等于不超时 —— 而默认值 30000 在那个
+//       读法下同样是不超时，所以两种解释都不会比现状更差。（本机 core 实现是把值直接交给
+//       setTimeout，即毫秒；全库唯一的官方用法 receiveTimeout: 40 更像秒。单位确实不定。）
+//   B4  第 2 次尝试改用「更像浏览器」的请求特征（补齐 Accept / Sec-Fetch-* / 不强制 HTTP2）。
+//       依据是实测：同一个 URL 换请求特征会得到**不同**结果（301 / 403+挑战 都出现过），
+//       所以这是有依据的兜底尝试，不是保证有效。为此把 403 也纳入重试 —— v1 遇到 403 直接
+//       返回，等于把这条兜底路径自己关掉了。成功路径的逻辑与正文解析一律没动。
+//   B5  详情页请求失败时不再返回「空壳详情」（v1 会给出标题=正片详情、封面空、点播放必失败）。
+// ----------------------------------------------------------------------------
 
 /**
  * 站点地址（原 py 的 self.siteUrl）。仅允许在 getClassList 里被 @webSite 覆盖，见 A9。
@@ -112,6 +134,16 @@ const kRoute = {
 
 /** A4 的开关 */
 const kGuardEmptyPage = true
+
+/**
+ * B3：单次请求的超时（毫秒）。真机 req 的默认是 30000，原版又要试 2 次，
+ * 站点不通时用户要干等 60 秒才看到「空列表」。这里压到 10 秒。
+ * 取值理由见文件头 B3：这个数在毫秒/秒两种读法下都不会比现状更差。
+ */
+const kTimeoutMs = 10000
+
+/** Cloudflare 挑战页的体量上限：真站正常页面 58–85KB，挑战页约 5.7KB（2026-09 实测） */
+const kChallengeMaxLen = 30000
 
 // ============================================================================
 // 工具函数
@@ -291,6 +323,17 @@ class bestjavClass extends WebApiBase {
             Accept: '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         }
+        // B4：第 2 次尝试用的「更像浏览器」的头（首轮失败后才会用到，成功路径不受影响）
+        this.kBrowserHeaders = {
+            'User-Agent': kUa,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1',
+        }
     }
 
     //MARK: - 分类
@@ -356,6 +399,8 @@ class bestjavClass extends WebApiBase {
             const r = await this.listAt(tid, page)
             backData.data = r.list
             backData.total = r.total
+            // B1：列表为空时必须能分清「真的没内容」和「请求失败」，所以把原因带出去
+            if (r.error) backData.error = this.failText('列表获取失败', r.error, r.url)
         } catch (error) {
             backData.error = '获取列表失败～' + error.message
         }
@@ -371,6 +416,7 @@ class bestjavClass extends WebApiBase {
             const r = await this.listAt(mainId, page)
             backData.data = r.list
             backData.total = r.total
+            if (r.error) backData.error = this.failText('列表获取失败', r.error, r.url)
         } catch (error) {
             backData.error = '获取列表失败～' + error.message
         }
@@ -395,6 +441,20 @@ class bestjavClass extends WebApiBase {
             }
             const res = await this.get(targetUrl)
             const html = res.text || ''
+
+            // B5：详情页没取到就报错，不要给一个「标题=正片详情、封面空、点播放必失败」的空壳详情
+            if (res.code !== 200) {
+                backData.error = this.failText('详情页取回失败', this.describeFailure(res.code, res.error, html), targetUrl)
+                return JSON.stringify(backData)
+            }
+            if (!html) {
+                backData.error = this.failText('详情页内容为空', '站点返回 HTTP 200 但正文是空的', targetUrl)
+                return JSON.stringify(backData)
+            }
+            if (this.isCloudflareChallenge(html)) {
+                backData.error = this.failText('详情页被人机验证拦住', this.describeFailure(res.code, res.error, html), targetUrl)
+                return JSON.stringify(backData)
+            }
 
             // 原 py：<h1> 优先，退 itemprop="name"
             let title = ''
@@ -453,15 +513,20 @@ class bestjavClass extends WebApiBase {
         try {
             const raw = String((args && args.url) || '').trim()
             let streamUrl = ''
+            let reason = '' // B1：解析卡在哪一步，失败时一并告诉用户
             if (raw.indexOf('raw_page@@') === 0) {
-                streamUrl = await this.resolveStream(raw.slice('raw_page@@'.length))
+                const rs = await this.resolveStream(raw.slice('raw_page@@'.length))
+                streamUrl = rs.url
+                reason = rs.reason
             } else if (
                 raw.indexOf('http') === 0 &&
                 (raw.indexOf('.m3u8') !== -1 || raw.indexOf('videplay') !== -1 || raw.indexOf('.mp4') !== -1)
             ) {
                 streamUrl = raw
             } else if (raw.indexOf('http') === 0) {
-                streamUrl = await this.resolveStream(raw)
+                const rs = await this.resolveStream(raw)
+                streamUrl = rs.url
+                reason = rs.reason
             }
 
             if (streamUrl && streamUrl.indexOf('master.m3u8') !== -1) {
@@ -482,7 +547,8 @@ class bestjavClass extends WebApiBase {
 
             if (!streamUrl) {
                 // A1：原版这里会返回 parse=1 + 内部标识；uz 没有 parse 语义，改为报错
-                backData.error = '解析播放地址失败，请稍后重试或换一部影片'
+                // B1：把卡住的原因一起说出来（网络阻断 / 人机验证 / 解密失败 …）
+                backData.error = reason ? '解析播放地址失败：' + reason : '解析播放地址失败，请稍后重试或换一部影片'
                 return JSON.stringify(backData)
             }
             backData.data = streamUrl
@@ -510,6 +576,7 @@ class bestjavClass extends WebApiBase {
             const r = await this.listAt(path, page)
             backData.data = r.list
             backData.total = r.total
+            if (r.error) backData.error = this.failText('搜索失败', r.error, r.url)
         } catch (error) {
             backData.error = '搜索失败～' + error.message
         }
@@ -546,19 +613,36 @@ class bestjavClass extends WebApiBase {
 
     /**
      * 抓列表页并解析
-     * @returns {Promise<{list: VideoDetail[], total: number}>}
+     * @returns {Promise<{list: VideoDetail[], total: number, url: string, error: string}>}
+     *          error 非空 = 这次没拿到可用页面（App 会显示出来）；error 为空 + list 为空 = 确实是空结果
      */
     async listAt(tid, page) {
         const url = this.buildListUrl(tid, page)
         const res = await this.get(url)
         const html = res.text || ''
-        // 原 py：正文短于 500 字节就当空页面
-        if (!html || html.length < 500) return { list: [], total: 0 }
+        // B1：请求层面就失败了，原因翻译成人话带出去（v1 这一步是静默的）
+        if (res.code !== 200) {
+            return { list: [], total: 0, url: url, error: this.describeFailure(res.code, res.error, html) }
+        }
+        if (!html) {
+            return { list: [], total: 0, url: url, error: '站点返回 HTTP 200，但正文是空的' }
+        }
+        // 原 py：正文短于 500 字节就当空页面。这里额外把「小得反常」也说出来，便于诊断
+        if (html.length < 500) {
+            return { list: [], total: 0, url: url, error: '站点返回的页面异常（只有 ' + html.length + ' 字节）' }
+        }
+        // B2：HTTP 200 也可能是 Cloudflare 挑战页（实测该站 403 与挑战页会交替出现）
+        if (this.isCloudflareChallenge(html)) {
+            return { list: [], total: 0, url: url, error: this.describeFailure(res.code, res.error, html) }
+        }
 
         if (kGuardEmptyPage && this.isEmptyResultPage(html, page)) {
-            return { list: [], total: 0 } // A4
+            return { list: [], total: 0, url: url, error: '' } // A4：这是真的空结果
         }
-        return this.parseListHtml(html, page)
+        const r = this.parseListHtml(html, page)
+        r.url = url
+        r.error = ''
+        return r
     }
 
     /** A4：识别「空搜索结果页」与「翻过头的 Page not found 页」 */
@@ -688,35 +772,52 @@ class bestjavClass extends WebApiBase {
      * 顺序：页面里直接给的 m3u8（排除 preview）→ 嵌入页 pox/dp 解密 → 嵌入页裸 m3u8
      * @param {string} pageUrl 详情页 URL
      * @param {string} [html] 已经拿到的详情页 HTML
+     * @returns {Promise<{url: string, reason: string}>} url 为空时 reason 说明卡在哪一步
      */
     async resolveStream(pageUrl, html) {
         let pageHtml = html
         if (!pageHtml) {
             const res = await this.get(pageUrl)
             pageHtml = res.text || ''
+            if (res.code !== 200) {
+                return { url: '', reason: '详情页取回失败（' + this.describeFailure(res.code, res.error, pageHtml) + '）' }
+            }
         }
-        if (!pageHtml) return ''
+        if (!pageHtml) return { url: '', reason: '详情页正文是空的' }
+        if (this.isCloudflareChallenge(pageHtml)) {
+            return { url: '', reason: '详情页被人机验证拦住（' + this.describeFailure(200, '', pageHtml) + '）' }
+        }
 
         const m3 = pageHtml.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/)
-        if (m3 && String(m3[1]).toLowerCase().indexOf('preview') === -1) return m3[1]
+        if (m3 && String(m3[1]).toLowerCase().indexOf('preview') === -1) return { url: m3[1], reason: '' }
 
         const embed = this.extractEmbedUrl(pageHtml)
-        if (!embed) return ''
+        if (!embed) return { url: '', reason: '详情页里找不到播放页地址（站点结构可能变了）' }
         const emb = await this.get(embed, pageUrl)
         const embHtml = emb.text || ''
+        if (emb.code !== 200) {
+            return { url: '', reason: '播放页取回失败（' + this.describeFailure(emb.code, emb.error, embHtml) + '）' }
+        }
+        if (this.isCloudflareChallenge(embHtml)) {
+            return { url: '', reason: '播放页被人机验证拦住（' + this.describeFailure(200, '', embHtml) + '）' }
+        }
 
         const poxM = embHtml.match(/let\s+pox\s*=\s*['"]([^'"]+)['"]/)
         const dpM = embHtml.match(/let\s+dp\s*=\s*['"]([^'"]+)['"]/)
         if (poxM && dpM) {
             const stream = bestjavAesDecrypt(poxM[1], dpM[1])
             if (stream && (stream.indexOf('m3u8') !== -1 || stream.indexOf('http') === 0)) {
-                return stream.trim().replace(/^"|"$/g, '')
+                return { url: stream.trim().replace(/^"|"$/g, ''), reason: '' }
             }
+            // 到这说明 pox/dp 有，但解密没出来 —— 留个原因，别让用户两手空空
+            const m3c = embHtml.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/)
+            if (m3c) return { url: m3c[1], reason: '' }
+            return { url: '', reason: '播放页解密失败（pox/dp 变了或密钥对不上）' }
         }
 
         const m3b = embHtml.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/)
-        if (m3b) return m3b[1]
-        return ''
+        if (m3b) return { url: m3b[1], reason: '' }
+        return { url: '', reason: '播放页里没有 m3u8 地址（站点结构可能变了）' }
     }
 
     /** 原 py _extract_embed_url */
@@ -772,36 +873,117 @@ class bestjavClass extends WebApiBase {
     //MARK: - 内部：网络
 
     /**
+     * 拼请求头。attempt=0 用原 py 的默认头；attempt>0 换「更像浏览器」的一套（B4）
+     */
+    headersFor(browserLike, referer) {
+        const base = browserLike ? this.kBrowserHeaders : this.kHeaders
+        const headers = {}
+        const keys = Object.keys(base)
+        for (let i = 0; i < keys.length; i++) headers[keys[i]] = base[keys[i]]
+        headers.Referer = referer || gSite + '/'
+        return headers
+    }
+
+    /** B3/B4：每次尝试的 req 选项 */
+    buildReqOptions(attempt, referer) {
+        const options = {
+            headers: this.headersFor(attempt > 0, referer),
+            sendTimeout: kTimeoutMs,
+            receiveTimeout: kTimeoutMs,
+        }
+        // B4：第 2 次不强制 HTTP2 —— 同一 URL 换请求特征实测会得到不同结果
+        if (attempt > 0) options.useHttp2 = false
+        return options
+    }
+
+    /**
+     * 这次失败还值不值得换特征再试一次。
+     * 网络层直接失败（连请求都没落地）和 403/408/5xx 值得再试；
+     * 404/410 这种站点给的明确答复再试也没用。
+     */
+    shouldRetry(code) {
+        if (!(code > 0)) return true // 0 / -1：网络层就失败了
+        if (code === 403 || code === 408) return true
+        if (code >= 500) return true
+        return false
+    }
+
+    /**
+     * B2：识别 Cloudflare 挑战页。真站页面 58–85KB，挑战页约 5.7KB，所以加个体量上限防误判。
+     */
+    isCloudflareChallenge(html) {
+        const s = String(html == null ? '' : html)
+        if (!s || s.length > kChallengeMaxLen) return false
+        if (/<title>\s*(Just a moment|Attention Required)/i.test(s)) return true
+        if (s.indexOf('cf_chl_') !== -1 || s.indexOf('__cf_chl') !== -1) return true
+        if (s.indexOf('Checking your browser before accessing') !== -1) return true
+        return false
+    }
+
+    /** 把 req 的 error 尾巴拼成 `：xxx`（没有就不拼） */
+    errTail(error) {
+        const e = String(error == null ? '' : error).trim()
+        return e ? '：' + e : ''
+    }
+
+    /**
+     * B1/B2：把一次请求失败翻译成用户看得懂的中文原因。
+     * 注意 uz 的 req 在**网络层失败**时也会给 code=500（不是 HTTP 500），
+     * 所以「500 且带 error」判为网络失败，「500 且无 error」才是真的服务器 500。
+     * @param {number} code HTTP 状态码 / uz 的 0、408、500
+     * @param {string} error req 给的错误消息
+     * @param {string} text 响应正文（用来认 Cloudflare 挑战页）
+     */
+    describeFailure(code, error, text) {
+        const body = String(text == null ? '' : text)
+        if (this.isCloudflareChallenge(body)) {
+            return '站点的人机验证页拦住了请求（Cloudflare），当前网络访问不了，请换网络或开代理后重试'
+        }
+        if (code === 403) return '站点返回 403（拒绝访问），可能是屏蔽了当前网络/地区，或触发了人机验证'
+        if (code === 429) return '站点返回 429（请求太频繁），请稍后重试'
+        if (code === 408) return '请求超时（' + kTimeoutMs + ' 毫秒内没有响应）'
+        if (code === 404) return '站点返回 404（页面不存在）'
+        if (!(code > 0)) return '网络请求失败' + this.errTail(error) + ' —— 站点可能被网络阻断，需要代理'
+        if (code >= 500 && error) return '网络请求失败' + this.errTail(error) + ' —— 站点可能被网络阻断，需要代理'
+        return '站点返回 HTTP ' + code
+    }
+
+    /** B1：统一把失败文案拼成「前缀：原因 + 请求地址」 */
+    failText(prefix, msg, url) {
+        let s = prefix + '：' + msg
+        if (url) s += '\n请求地址：' + url
+        return s
+    }
+
+    /**
      * 原 py _fetch（含「最多 2 次」的重试）
-     * @returns {Promise<{code:number, text:string}>}
+     * @returns {Promise<{code:number, text:string, error:string, ct:string}>}
+     *          error / ct 是 v2 新增的附带信息（B1），成功路径的返回内容与 v1 相同
      */
     async get(url, referer) {
         const target = absUrl(url)
-        if (!target) return { code: 0, text: '' }
-        const headers = {}
-        const keys = Object.keys(this.kHeaders)
-        for (let i = 0; i < keys.length; i++) headers[keys[i]] = this.kHeaders[keys[i]]
-        headers.Referer = referer || gSite + '/'
+        if (!target) return { code: 0, text: '', error: '地址为空', ct: '' }
 
-        let lastCode = -1
+        let out = { code: -1, text: '', error: '', ct: '' }
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
-                const pro = await req(target, { headers: headers })
+                const pro = await req(target, this.buildReqOptions(attempt, referer))
                 const code = pro && pro.code ? pro.code : 0
-                // 原 py 只对「抛异常」重试；req 不走异常，所以这里用「网络层失败」来等价判断
-                if (pro && code === 200) {
-                    return { code: 200, text: typeof pro.data === 'string' ? pro.data : '' }
-                }
-                lastCode = code
-                if (code > 0 && code < 500 && code !== 408) {
-                    // 明确的业务状态码（如 404），不重试
-                    return { code: code, text: typeof pro.data === 'string' ? pro.data : '' }
+                const hd = (pro && pro.headers) || {}
+                out = {
+                    code: code,
+                    text: pro && typeof pro.data === 'string' ? pro.data : '',
+                    error: String((pro && pro.error) || ''),
+                    ct: String(hd['content-type'] || hd['Content-Type'] || ''),
                 }
             } catch (e) {
-                lastCode = -1
+                out = { code: -1, text: '', error: (e && e.message) ? String(e.message) : String(e), ct: '' }
             }
+            if (out.code === 200) return out
+            // 原 py 只对「抛异常」重试；req 不走异常，所以这里用「网络层失败 / 403」来等价判断
+            if (!this.shouldRetry(out.code)) return out
         }
-        return { code: lastCode, text: '' }
+        return out
     }
 }
 let bestjav2026 = new bestjavClass()
