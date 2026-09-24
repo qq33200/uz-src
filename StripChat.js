@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] StripChat
-//@version:2
+//@version:3
 //@webSite:https://zh.stripchat.com
-//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。
+//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
 //@type:100
 //@instance:stripchat2026
 //@isAV:1
@@ -14,22 +14,22 @@ import { } from '../../core/uzUtils.js'
 // ignore
 
 /** 三条官方线路，顺序即优先级 */
-const kDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'https://zh.stripol.com']
+const scDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'https://zh.stripol.com']
 
 /**
  * 拉流用的边缘节点，按顺序试。
  * 与原 py 的 playerContent 完全一致：先 sacfedge，失败再降级到 doppiocdn.org。
  */
-const kEdgeMasters = [
+const scEdgeMasters = [
     'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
     'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
 ]
 
 /** 每页多少个主播 */
-const kPageSize = 60
+const scPageSize = 60
 
 /** 搜索时每个分类各取多少条 */
-const kSearchLimit = 30
+const scSearchLimit = 30
 
 /**
  * 弹幕开关。默认关闭。
@@ -37,12 +37,12 @@ const kSearchLimit = 30
  * 之后不会再拉新消息，所以它更像是「进房时把最近的聊天刷一遍」而不是真正的实时弹幕。
  * 想体验就把下面改成 true。
  */
-const kEnableDanmu = false
+const scEnableDanmu = false
 
 /** 快照弹幕的间隔秒数（把最近若干条聊天按这个间隔铺开） */
-const kDanmuInterval = 2
+const scDanmuInterval = 2
 
-const kUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0'
+const scUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0'
 
 /**
  * 把 req 的返回值安全地解析成 JSON 对象。
@@ -53,7 +53,7 @@ const kUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 
  * 所以**绝对不能无条件 `JSON.parse(pro.data)`**，那会在真机上直接抛 "Unexpected token o"。
  * 官方扩展也是这么兼容的，见 panTools2.js: `typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data`
  */
-function parseJsonData(d) {
+function scParseJsonData(d) {
     if (d === null || d === undefined || d === '') {
         return null
     }
@@ -72,17 +72,17 @@ function parseJsonData(d) {
 }
 
 /** 把 req 的返回值安全地取成文本（m3u8 / HTML 用） */
-function asText(d) {
+function scAsText(d) {
     return typeof d === 'string' ? d : ''
 }
 
 /** 从 URL 里取「协议+域名」 */
-function originOf(url) {
+function scOriginOf(url) {
     const m = String(url || '').match(/^(https?:\/\/[^\/]+)/i)
     return m ? m[1] : ''
 }
 
-class stripchatClass extends WebApiBase {
+class scStripchatClass extends WebApiBase {
     constructor() {
         super()
         // 自愈到可用域名后记在这里，后续请求都用它
@@ -177,10 +177,10 @@ class stripchatClass extends WebApiBase {
             if (!t) {
                 t = 'girls'
             }
-            const offset = kPageSize * (page > 0 ? page - 1 : 0)
+            const offset = scPageSize * (page > 0 ? page - 1 : 0)
             let path =
                 '/api/front/models?improveTs=false&removeShows=false&limit=' +
-                kPageSize +
+                scPageSize +
                 '&offset=' +
                 offset +
                 '&primaryTag=' +
@@ -272,17 +272,17 @@ class stripchatClass extends WebApiBase {
             }
 
             const headers = {
-                'User-Agent': kUa,
+                'User-Agent': scUa,
                 Origin: this.curHost(),
                 Referer: this.curHost() + '/',
             }
             backData.headers = headers
 
             let variants = []
-            for (let i = 0; i < kEdgeMasters.length; i++) {
-                const master = kEdgeMasters[i].split('{id}').join(sid)
+            for (let i = 0; i < scEdgeMasters.length; i++) {
+                const master = scEdgeMasters[i].split('{id}').join(sid)
                 const r = await this.get(master)
-                const text = asText(r.data)
+                const text = scAsText(r.data)
                 if (r.code === 200 && text.indexOf('#EXT-X-STREAM-INF') !== -1) {
                     variants = this.parseVariants(text, master)
                     if (variants.length) {
@@ -302,7 +302,7 @@ class stripchatClass extends WebApiBase {
             }
             backData.urls = urls
 
-            if (kEnableDanmu) {
+            if (scEnableDanmu) {
                 backData.danMu = await this.fetchDanmu(sid)
             }
         } catch (error) {
@@ -370,7 +370,7 @@ class stripchatClass extends WebApiBase {
                         '/api/front/v4/models/search/group/username?query=' +
                             encodeURIComponent(kw) +
                             '&limit=' +
-                            kSearchLimit +
+                            scSearchLimit +
                             '&primaryTag=' +
                             tags[i]
                     )
@@ -419,7 +419,7 @@ class stripchatClass extends WebApiBase {
             if (!item) {
                 continue
             }
-            out.push({ content: item, time: i * kDanmuInterval })
+            out.push({ content: item, time: i * scDanmuInterval })
         }
         return out
     }
@@ -643,11 +643,11 @@ class stripchatClass extends WebApiBase {
         }
         const h = this.hostOf(this.webSite)
         const i = h ? this._indexOfDomain(h) : -1
-        return i === -1 ? kDomains[0] : this._domains()[i]
+        return i === -1 ? scDomains[0] : this._domains()[i]
     }
 
     _domains() {
-        return this._domainOrder || kDomains
+        return this._domainOrder || scDomains
     }
 
     _indexOfDomain(host) {
@@ -683,7 +683,7 @@ class stripchatClass extends WebApiBase {
         for (let i = 0; i < ds.length; i++) {
             const r = await this.get(ds[i] + path)
             last = r
-            const json = parseJsonData(r.data)
+            const json = scParseJsonData(r.data)
             if (json) {
                 this._healedHost = ds[i]
                 return { json: json, error: '' }
@@ -699,7 +699,7 @@ class stripchatClass extends WebApiBase {
         if (!r) {
             return '网络请求失败，请稍后重试'
         }
-        const body = asText(r.data)
+        const body = scAsText(r.data)
         if (body.indexOf('Just a moment') !== -1 || body.indexOf('cf-chl') !== -1 || body.indexOf('challenge-platform') !== -1) {
             return '被 Cloudflare 人机验证拦了（请求太密），等几分钟再试'
         }
@@ -724,11 +724,11 @@ class stripchatClass extends WebApiBase {
      * 这里不传，交给 App 用默认值，避免单位理解错导致「永不超时」。
      */
     async get(url, refererOrigin) {
-        const origin = refererOrigin || originOf(url) || this.curHost()
+        const origin = refererOrigin || scOriginOf(url) || this.curHost()
         try {
             const p = await req(url, {
                 headers: {
-                    'User-Agent': kUa,
+                    'User-Agent': scUa,
                     Accept: 'application/json, text/plain, */*',
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
                     Origin: origin,
@@ -767,4 +767,4 @@ class stripchatClass extends WebApiBase {
     }
 }
 
-var stripchat2026 = new stripchatClass()
+var stripchat2026 = new scStripchatClass()
