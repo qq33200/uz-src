@@ -1,0 +1,12 @@
+[
+  {
+    "name": "[禁] 一锅端聚合",
+    "version": 1,
+    "remark": "51 站聚合（短剧/影视/成人/音频/动漫），站点直接作一级分类、站内分类走筛选面板；播放头透传官方防盗链签名 x-aggr-sig",
+    "webSite": "https://av.telstra.com.cv",
+    "instance": "yiguoduan2026",
+    "order": "E",
+    "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/Yiguoduan.js",
+    "type": 100
+  }
+]
