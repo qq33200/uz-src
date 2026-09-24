@@ -1,8 +1,8 @@
 [
   {
     "name": "[禁] GetAV",
-    "version": 2,
-    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。v2 修复 JSON 响应解析",
+    "version": 3,
+    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
     "webSite": "https://getav.net",
     "instance": "getav2026",
     "order": "E",
