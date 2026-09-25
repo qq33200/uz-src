@@ -1,0 +1,32 @@
+[
+  {
+    "name": "9加9·91成人短剧",
+    "api": "https://crawler-91duanju.2086378775.workers.dev/live.m3u",
+    "type": 10,
+    "remark": "91crdj 深挖，约 4842 频道"
+  },
+  {
+    "name": "9加9·裤佬点播",
+    "api": "https://crawler-huangye.2086378775.workers.dev/live.m3u",
+    "type": 10,
+    "remark": "裤佬黄色网站点播，约 3200 频道"
+  },
+  {
+    "name": "9加9·四站合一",
+    "api": "https://crawler-4in1.2086378775.workers.dev/live.m3u",
+    "type": 10,
+    "remark": "91crdj+禁果+黄果+野果，约 1080 频道"
+  },
+  {
+    "name": "9加9·禁果短剧",
+    "api": "https://crawler-jinguo.2086378775.workers.dev/live.m3u",
+    "type": 10,
+    "remark": "裤佬禁果短剧，约 374 频道"
+  },
+  {
+    "name": "9加9·野果AI",
+    "api": "https://crawler-yeguo.2086378775.workers.dev/live.m3u",
+    "type": 10,
+    "remark": "野果 yeguodj 站"
+  }
+]
