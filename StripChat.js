@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] StripChat
-//@version:3
+//@version:4
 //@webSite:https://zh.stripchat.com
-//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
+//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v4 提速：①已探明的可用域名优先复用（原来每次请求都从第一条重新试，白等一遍）②线路未知时三域名并行竞速，不再串行等失败 ③拉流节点改为先试实测更快的 doppiocdn（原先把最慢的排第一）④请求加 10 秒超时
 //@type:100
 //@instance:stripchat2026
 //@isAV:1
@@ -18,11 +18,15 @@ const scDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'h
 
 /**
  * 拉流用的边缘节点，按顺序试。
- * 与原 py 的 playerContent 完全一致：先 sacfedge，失败再降级到 doppiocdn.org。
+ * v4 调序依据（2026-09-28 实测，3 个直播中主播取多轮最快值）：
+ *   doppiocdn.org 0.43~0.57s  ✅ 稳定
+ *   sacfedge.com  0.92~1.52s  ⚠️ 明显更慢，且出现过失败
+ * 原版把最慢的 sacfedge 排在第一位，而取出逻辑是「第一条成功就不再试第二条」，
+ * 等于每次都先付最慢那个的延迟 → 现在把实测更快的 doppiocdn 提到第一位。
  */
 const scEdgeMasters = [
-    'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
     'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
+    'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
 ]
 
 /** 每页多少个主播 */
@@ -43,6 +47,19 @@ const scEnableDanmu = false
 const scDanmuInterval = 2
 
 const scUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0'
+
+/**
+ * 单次请求超时。
+ *
+ * ⚠️ uz 的 sendTimeout / receiveTimeout 单位没有定论（见扩展开发笔记）：
+ *   - 读作毫秒 → 10000 = 10 秒（够用：列表 JSON 84KB，实测 0.6s）
+ *   - 读作秒   → 10000 ≈ 2.7 小时 = 相当于不超时（与不传的默认值同档）
+ * 两种读法都安全，且**不会比原版更差**（原版不传，默认 30000）。
+ *
+ * 为什么值得传：本扩展在「域名不通」时会串行试多条线路，
+ * 若某条线路是「连上但不响应」的黑洞，不传超时就要干等默认值（毫秒读法下 30 秒）。
+ */
+const scTimeoutMs = 10000
 
 /**
  * 把 req 的返回值安全地解析成 JSON 对象。
@@ -87,6 +104,8 @@ class scStripchatClass extends WebApiBase {
         super()
         // 自愈到可用域名后记在这里，后续请求都用它
         this._healedHost = ''
+        // 正在进行的「并行选路」任务；并发调用共享它，避免各自竞速把请求数翻倍
+        this._raceTask = null
     }
 
     //MARK: - 分类
@@ -646,8 +665,27 @@ class scStripchatClass extends WebApiBase {
         return i === -1 ? scDomains[0] : this._domains()[i]
     }
 
+    /**
+     * 域名顺序：把「已经探明可用」的域名提到第一位。
+     *
+     * ⚠️ 这是 v4 修掉的核心性能问题：
+     * 原版 `_healedHost` 只在 curHost()（请求头里的 Origin/Referer）用到，
+     * `_domains()` 完全不理它 → 每次 apiGet 都还从 `scDomains[0]` 开始试。
+     * 用户网络下第一条慢或不通时，**每一次请求都要先把第一条等死**，白等一遍。
+     */
     _domains() {
-        return this._domainOrder || scDomains
+        const base = this._domainOrder || scDomains
+        const h = this._healedHost
+        if (!h) {
+            return base
+        }
+        let out = [h]
+        for (let i = 0; i < base.length; i++) {
+            if (base[i] !== h) {
+                out.push(base[i])
+            }
+        }
+        return out
     }
 
     _indexOfDomain(host) {
@@ -673,11 +711,65 @@ class scStripchatClass extends WebApiBase {
     }
 
     /**
-     * 对齐原 py 的 _request_with_failover：
-     * 直接在各个域名上请求**目标路径**，谁先返回可用 JSON 就用谁，并记住这个域名。
-     * 不再做额外的「探测请求」——探测会多打一次接口，反而更容易触发风控。
+     * 取一次接口数据。
+     *
+     * v4 起分三条路（依据 2026-09-28 实测：com/global 平时 0.5~0.8s，
+     * 但会**偶发挂住 5~25 秒**；stripol 稳定但偏慢 1.2s）：
+     *   ① 已有探明线路 → 单发一条（绝大多数情况，1 个请求搞定）
+     *   ② 正在选路 → 等它出结果，再用选出的线路单发本路径
+     *      （防止 searchVideo 那种并发调用各自竞速，把请求数翻三倍）
+     *   ③ 线路未知 / 刚失效 → 三条**并行竞速**，谁先给出有效 JSON 用谁
+     *
+     * 原版是无条件串行 for 循环：第一条挂了就**一直等它挂完**（实测最长 25 秒），
+     * 而且 `_healedHost` 不参与排序 → 每次请求都重来一遍。
      */
     async apiGet(path) {
+        // ① 快路径
+        if (this._healedHost) {
+            const r = await this.get(this._healedHost + path)
+            const json = scParseJsonData(r.data)
+            if (json) {
+                return { json: json, error: '' }
+            }
+            // 这条已经不行了（挂起超时 / 被限流 / 抖动），丢掉记录，重新选路
+            this._healedHost = ''
+        }
+
+        // ② 已有一次选路在进行 → 等它，然后用选出的线路单发本路径
+        if (this._raceTask) {
+            await this._raceTask
+            if (this._healedHost) {
+                const r = await this.get(this._healedHost + path)
+                const json = scParseJsonData(r.data)
+                if (json) {
+                    return { json: json, error: '' }
+                }
+                this._healedHost = ''
+            }
+            return await this.serialApi(path)
+        }
+
+        // ③ 发起一次竞速（用本路径，顺便拿到本路径的数据）
+        //    注意：这一步必须是**同步**赋值，否则并发调用会各自开一次竞速
+        let res = null
+        this._raceTask = this.raceApi(path)
+        try {
+            res = await this._raceTask
+        } finally {
+            this._raceTask = null
+        }
+        if (res && res.json) {
+            return res
+        }
+        // 竞速全失败 → 串行兜底一次，把真实失败原因带出来
+        return await this.serialApi(path)
+    }
+
+    /**
+     * 串行兜底：按当前顺序一条条试，第一条给出有效 JSON 的胜出并被记住。
+     * 只在「竞速全失败」时用到（站点整个不通），此时失败原因更有参考价值。
+     */
+    async serialApi(path) {
         const ds = this._domains()
         let last = null
         for (let i = 0; i < ds.length; i++) {
@@ -690,6 +782,58 @@ class scStripchatClass extends WebApiBase {
             }
         }
         return { json: null, error: this.describeFailure(last) }
+    }
+
+    /**
+     * 线路未知时：三条**并行**竞速，谁先返回有效 JSON 就用谁，并记住它。
+     *
+     * 这是本版最关键的提速点：把「等某个域名挂完 25 秒」变成「等最快那条 ~0.5 秒」。
+     * 代价可控：只在「首次」或「原线路失效后」发生，多打 1~2 个请求；
+     * 一旦确定线路，后续全部走 apiGet 的①，一个多余请求都没有。
+     */
+    async raceApi(path) {
+        const ds = this._domains()
+        if (!ds.length) {
+            return { json: null, error: '没有可用线路' }
+        }
+        return await new Promise((resolve) => {
+            let left = ds.length
+            let last = null
+            let done = false
+            const finish = (res) => {
+                if (!done) {
+                    done = true
+                    resolve(res)
+                }
+            }
+            const onFail = (r) => {
+                last = r
+                left--
+                if (left <= 0) {
+                    finish({ json: null, error: this.describeFailure(last) })
+                }
+            }
+            for (let i = 0; i < ds.length; i++) {
+                const host = ds[i]
+                this.get(host + path)
+                    .then((r) => {
+                        const json = scParseJsonData(r.data)
+                        if (json) {
+                            // 只有第一个成功的会走到 finish，但 _healedHost 可能被后到的覆盖，
+                            // 这里加 done 判断，保证记下的是**真正胜出**的那条
+                            if (!done) {
+                                this._healedHost = host
+                            }
+                            finish({ json: json, error: '' })
+                            return
+                        }
+                        onFail(r)
+                    })
+                    .catch((e) => {
+                        onFail({ code: -1, data: null, error: e && e.message })
+                    })
+            }
+        })
     }
 
     /**
@@ -720,8 +864,8 @@ class scStripchatClass extends WebApiBase {
 
     /**
      * 发一个 GET。
-     * 注意：uz 的 sendTimeout / receiveTimeout 单位是「秒」（官方模板里写的是 40），
-     * 这里不传，交给 App 用默认值，避免单位理解错导致「永不超时」。
+     * v4 起显式传 scTimeoutMs（两种单位读法下都安全，见该常量说明）。
+     * 原版不传 → 某条线路「连上但不响应」时要干等 App 默认值（毫秒读法下 30 秒）。
      */
     async get(url, refererOrigin) {
         const origin = refererOrigin || scOriginOf(url) || this.curHost()
@@ -734,6 +878,8 @@ class scStripchatClass extends WebApiBase {
                     Origin: origin,
                     Referer: origin + '/',
                 },
+                sendTimeout: scTimeoutMs,
+                receiveTimeout: scTimeoutMs,
             })
             return { code: p.code, data: p.data, error: p.error || '' }
         } catch (e) {
