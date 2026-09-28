@@ -1,0 +1,82 @@
+{
+  "vod": [
+    {
+      "name": "[禁] 一锅端聚合",
+      "version": 2,
+      "remark": "51 站聚合（短剧/影视/成人/音频/动漫）。uz 无文件夹卡片机制，故把站点直接作为一级分类（按原版 6 大类聚簇排序 + 前缀），站内分类走筛选面板；播放头严格透传官方防盗链签名 x-aggr-sig；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
+      "webSite": "https://av.telstra.com.cv",
+      "instance": "yiguoduan2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/Yiguoduan.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] 蝴蝶影院",
+      "version": 2,
+      "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选。v2 修正请求超时参数",
+      "webSite": "https://ptt01.com",
+      "instance": "hudieyingyuan2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/Hudie_yingyuan.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] GetAV",
+      "version": 3,
+      "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
+      "webSite": "https://getav.net",
+      "instance": "getav2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/GetAV.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] StripChat",
+      "version": 6,
+      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v6：彻底移除广告节点 doppiocdn（实测它是第三方广告服务器，域名解析到 38.60.148.x / 156.227.14.x、非 Cloudflare；v5 只把它降为兜底，sacfedge 一失败就仍会落到它、继续放广告），现在只用 sacfedge；并加固文本读取、报错时带上节点诊断；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时",
+      "webSite": "https://zh.stripchat.com",
+      "instance": "stripchat2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/StripChat.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] 蝴蝶·BestJavPorn",
+      "version": 3,
+      "remark": "bestjavporn.me：7 分类；详情页 rocketlazyload → /xx/ 嵌入页 pox+dp，播放时实时 AES-256-CBC 解密直出 m3u8；请求失败会显示真实原因（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
+      "webSite": "https://bestjavporn.me",
+      "instance": "bestjav2026",
+      "order": "F",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/Hudie_bestjav.js",
+      "type": 100
+    },
+    {
+      "name": "[禁] 电视直播",
+      "version": 1,
+      "remark": "96 个频道全硬编码、零网络请求（点开就是列表，不转圈）。8 个分类含 4 个成人分类；2026-09-24 实测 71/96 可直连，失效频道已排到每类末尾但全部保留（链接会自行复活），右侧备注写明每个频道的实测状态。支持按频道名搜索。",
+      "webSite": "http://107.150.60.122/live/cctv6hd.m3u8",
+      "instance": "livetv2026",
+      "order": "E",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/LiveTV.js",
+      "type": 100
+    },
+    {
+      "name": "凤梨音乐",
+      "version": 3,
+      "remark": "flmp3.pro 无损音乐站。最新音乐/热门音乐/全部歌曲 三个分类 + 站内搜索；详情取歌名/歌手/封面；播放时实时向 /api/playurl.php 换真实直链（详情只存歌曲 id，不存会过期的签名地址）。主域名挂了自动切备用域名。v3：修正真机扩展报错（成对忽略标记已补齐）。",
+      "webSite": "https://www.flmp3.pro",
+      "order": "G",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/FengliMusic.js",
+      "type": 101
+    },
+    {
+      "name": "MoboReels 畅读热剧",
+      "version": 3,
+      "remark": "竖屏短剧站（Nuxt SSR）。30 个题材分类 + 站内搜索；剧集数据内联在页面的 window.__NUXT__ 里，直接求值取用。v3：修正真机扩展报错（成对忽略标记已补齐）。⚠️ 详情/播放链路未能在开发机上验证：本机（Node/curl）请求详情页会被站点 WAF 降级成不含剧集数据的精简版，分类页/搜索页则正常（已实测）。真机是 Flutter 原生请求栈，通常能拿到完整版；若详情页报错，请把提示原文反馈。",
+      "webSite": "https://www.moboreels.com/cn/",
+      "order": "H",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/MoboReels.js",
+      "type": 101
+    }
+  ]
+}
