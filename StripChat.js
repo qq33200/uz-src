@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] StripChat
-//@version:5
+//@version:6
 //@webSite:https://zh.stripchat.com
-//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v5 修正：拉流节点换回 sacfedge（实测 doppiocdn 一族给的是广告流——3 个不同主播经它取回的首分片完全相同，导致所有直播都变 20 秒广告），并加了广告分片特征探测；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时
+//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v6：彻底移除广告节点 doppiocdn（v5 只把它降为兜底，真机上 sacfedge 一旦失败仍会落到它、继续放广告），并加固文本读取（真机 m3u8 可能不是字符串，会让广告检测失效）；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时
 //@type:100
 //@instance:stripchat2026
 //@isAV:1
@@ -17,7 +17,7 @@ import { } from '../../core/uzUtils.js'
 const scDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'https://zh.stripol.com']
 
 /**
- * 拉流用的边缘节点，按顺序试。
+ * 拉流用的边缘节点。
  *
  * 🔴 2026-09-28 实测（关键结论，别再按「谁快用谁」调回去）：
  *   **只有 sacfedge 给的是真实直播流，doppiocdn 一族给的是广告。**
@@ -25,25 +25,30 @@ const scDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'h
  *     · doppiocdn（.org / .media 都一样）→ **3 个主播的首分片完全同一个文件**
  *       （131824 B，路径 `/b-hls-xx/cpa/v2/chunk_000.m4s`，cpa = 广告投放）
  *     · sacfedge → 每路各不相同，路径含房间号 + 签名
- *       （`/b-hls-xx/<房间号>/<房间号>_240p_h264_<签名>.mp4`）
+ *       （`/b-hls-xx/<房间号>/<房间号>_480p_h264_<签名>.mp4`）
  *
- * ⚠️ 曾经踩过：v4 只看了「响应快不快」就把 doppiocdn 提到第一位 ——
- *   它确实更快（0.43~0.57s vs 0.92~1.52s），但快的是广告：
- *   所有直播间都变成「加载很久 → 放 20 秒广告 → 看不到直播」。
- *   **教训：验证拉流节点必须验「内容是不是这个房间的真实流」，不能只看状态码/延迟/有没有清单。**
+ * ⚠️ 这里连踩两次，两次都是「广告」：
+ *   · v4：只看了「响应快不快」就把 doppiocdn 提到第一位（它确实更快 0.43s vs 0.92s，
+ *     但快的是广告）→ 所有直播间都变成「加载很久 → 放 20 秒广告」。
+ *   · v5：把 sacfedge 放回第一位，**但把 doppiocdn 留在了第二位当兜底** ——
+ *     真机上 sacfedge 一旦拉不到（国内网络很常见），就会落到它，**又是广告**。
  *
- * doppiocdn 保留在第二位只作为兜底，且下面有广告特征探测会把它筛掉。
+ * → **v6 直接把 doppiocdn 移除。** 一个只给广告的地址没有任何兜底价值：
+ *   拉不到就该报错（用户能看懂「拉不到直播清单」），绝不能把广告塞给播放器。
  */
 const scEdgeMasters = [
     'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
-    'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
 ]
 
 /**
  * 广告分片的路径特征。
  * 出现在媒体清单里就说明这一路拿到的是广告片（而不是该房间的直播流）。
+ * 留着它作为最后一道保险：万一将来唯一节点也开始给广告，宁可报错也不放广告。
  */
 const scAdSegMark = '/cpa/'
+
+/** 版本标记，会显示在详情页正文里 —— 方便确认 App 里跑的是哪一版（排查用） */
+const scVersionTag = 'v6'
 
 /** 每页多少个主播 */
 const scPageSize = 60
@@ -104,9 +109,60 @@ function scParseJsonData(d) {
     return null
 }
 
-/** 把 req 的返回值安全地取成文本（m3u8 / HTML 用） */
+/**
+ * 把 req 的返回值安全地取成文本（m3u8 / HTML 用）。
+ *
+ * 早期只处理 `typeof d === 'string'`，其余一律返回空串 —— 一旦真机上 m3u8 的
+ * content-type 没被识别成文本（`data` 是 ArrayBuffer / Uint8Array），
+ * 「有没有清单」的判断和广告探测就会**一起失效**（探测失效 = 广告地址被原样交给播放器）。
+ * 这里把二进制形态也解开。
+ */
 function scAsText(d) {
-    return typeof d === 'string' ? d : ''
+    if (d === null || d === undefined) {
+        return ''
+    }
+    if (typeof d === 'string') {
+        return d
+    }
+    if (d instanceof ArrayBuffer) {
+        try {
+            return scDecodeUtf8(new Uint8Array(d))
+        } catch (e) {
+            return ''
+        }
+    }
+    if (ArrayBuffer.isView(d)) {
+        try {
+            return scDecodeUtf8(new Uint8Array(d.buffer, d.byteOffset, d.byteLength))
+        } catch (e) {
+            return ''
+        }
+    }
+    return ''
+}
+
+/** UTF-8 解码（TextDecoder 不一定存在于宿主引擎，给个纯手写的兜底） */
+function scDecodeUtf8(u8) {
+    if (typeof TextDecoder !== 'undefined') {
+        return new TextDecoder('utf-8').decode(u8)
+    }
+    let s = ''
+    let i = 0
+    while (i < u8.length) {
+        const c = u8[i++]
+        if (c < 0x80) {
+            s += String.fromCharCode(c)
+        } else if (c < 0xe0) {
+            s += String.fromCharCode(((c & 0x1f) << 6) | (u8[i++] & 0x3f))
+        } else if (c < 0xf0) {
+            s += String.fromCharCode(((c & 0x0f) << 12) | ((u8[i++] & 0x3f) << 6) | (u8[i++] & 0x3f))
+        } else {
+            const cp = ((c & 0x07) << 18) | ((u8[i++] & 0x3f) << 12) | ((u8[i++] & 0x3f) << 6) | (u8[i++] & 0x3f)
+            const v = cp - 0x10000
+            s += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff))
+        }
+    }
+    return s
 }
 
 /** 从 URL 里取「协议+域名」 */
@@ -265,6 +321,8 @@ class scStripchatClass extends WebApiBase {
                 'https://t.me/tvshare23' +
                 '】\n【当前线路: ' +
                 this.curHost() +
+                '】\n【扩展版本: ' +
+                scVersionTag +
                 '】\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
                 'StripChat 直播直连。\n' +
                 '门票房（🎫）对未付费游客只放广告片，属正常现象，换个 🔴 免费房即可。'
@@ -315,22 +373,27 @@ class scStripchatClass extends WebApiBase {
 
             let variants = []
             let sawAd = false
+            const diag = []
             for (let i = 0; i < scEdgeMasters.length; i++) {
+                const node = this.hostOf(scEdgeMasters[i])
                 const master = scEdgeMasters[i].split('{id}').join(sid)
                 const r = await this.get(master)
                 const text = scAsText(r.data)
                 if (r.code !== 200 || text.indexOf('#EXT-X-STREAM-INF') === -1) {
+                    diag.push(node + ' HTTP' + r.code + (text ? ' 无清单' : ' 空响应'))
                     continue
                 }
                 const vs = this.parseVariants(text, master)
                 if (!vs.length) {
+                    diag.push(node + ' 无档位')
                     continue
                 }
-                // 探一眼首档的真实分片清单：若出现广告分片特征，说明这个节点在给广告，换下一个
+                // 探一眼首档的真实分片清单：若出现广告分片特征，说明这一路在给广告，不用它
                 const probe = await this.get(vs[0].url)
                 const probeText = scAsText(probe.data)
                 if (probeText && probeText.indexOf(scAdSegMark) !== -1) {
                     sawAd = true
+                    diag.push(node + ' 广告流已拦下')
                     continue
                 }
                 variants = vs
@@ -339,8 +402,9 @@ class scStripchatClass extends WebApiBase {
 
             if (!variants.length) {
                 backData.error = sawAd
-                    ? '取到的是广告流（CDN 对未登录访客推的），换个主播或稍后再试'
-                    : '拉不到直播清单，可能已下播或该地区被墙'
+                    ? '取到的是广告流（CDN 推的），已拦下不给播放。请换个主播或稍后再试'
+                    : '拉不到直播清单，可能已下播，或当前网络连不上拉流节点' +
+                      (diag.length ? '（' + diag.join('；') + '）' : '')
                 return JSON.stringify(backData)
             }
 
