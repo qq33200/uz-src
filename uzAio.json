@@ -32,8 +32,8 @@
     },
     {
       "name": "[禁] StripChat",
-      "version": 3,
-      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
+      "version": 4,
+      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理；v4 提速：①已探明的可用域名优先复用（原来每次请求都从第一条重新试，白等一遍）②线路未知时三域名并行竞速，不再串行等失败 ③拉流节点改为先试实测更快的 doppiocdn（原先把最慢的排第一）④请求加 10 秒超时",
       "webSite": "https://zh.stripchat.com",
       "instance": "stripchat2026",
       "order": "E",
