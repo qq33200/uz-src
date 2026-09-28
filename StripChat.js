@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] StripChat
-//@version:4
+//@version:5
 //@webSite:https://zh.stripchat.com
-//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v4 提速：①已探明的可用域名优先复用（原来每次请求都从第一条重新试，白等一遍）②线路未知时三域名并行竞速，不再串行等失败 ③拉流节点改为先试实测更快的 doppiocdn（原先把最慢的排第一）④请求加 10 秒超时
+//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v5 修正：拉流节点换回 sacfedge（实测 doppiocdn 一族给的是广告流——3 个不同主播经它取回的首分片完全相同，导致所有直播都变 20 秒广告），并加了广告分片特征探测；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时
 //@type:100
 //@instance:stripchat2026
 //@isAV:1
@@ -18,16 +18,32 @@ const scDomains = ['https://zh.stripchat.com', 'https://zh.stripchat.global', 'h
 
 /**
  * 拉流用的边缘节点，按顺序试。
- * v4 调序依据（2026-09-28 实测，3 个直播中主播取多轮最快值）：
- *   doppiocdn.org 0.43~0.57s  ✅ 稳定
- *   sacfedge.com  0.92~1.52s  ⚠️ 明显更慢，且出现过失败
- * 原版把最慢的 sacfedge 排在第一位，而取出逻辑是「第一条成功就不再试第二条」，
- * 等于每次都先付最慢那个的延迟 → 现在把实测更快的 doppiocdn 提到第一位。
+ *
+ * 🔴 2026-09-28 实测（关键结论，别再按「谁快用谁」调回去）：
+ *   **只有 sacfedge 给的是真实直播流，doppiocdn 一族给的是广告。**
+ *   判据：取 3 个不同主播、经两个节点各拉一次首分片算 sha256 ——
+ *     · doppiocdn（.org / .media 都一样）→ **3 个主播的首分片完全同一个文件**
+ *       （131824 B，路径 `/b-hls-xx/cpa/v2/chunk_000.m4s`，cpa = 广告投放）
+ *     · sacfedge → 每路各不相同，路径含房间号 + 签名
+ *       （`/b-hls-xx/<房间号>/<房间号>_240p_h264_<签名>.mp4`）
+ *
+ * ⚠️ 曾经踩过：v4 只看了「响应快不快」就把 doppiocdn 提到第一位 ——
+ *   它确实更快（0.43~0.57s vs 0.92~1.52s），但快的是广告：
+ *   所有直播间都变成「加载很久 → 放 20 秒广告 → 看不到直播」。
+ *   **教训：验证拉流节点必须验「内容是不是这个房间的真实流」，不能只看状态码/延迟/有没有清单。**
+ *
+ * doppiocdn 保留在第二位只作为兜底，且下面有广告特征探测会把它筛掉。
  */
 const scEdgeMasters = [
-    'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
     'https://edge-hls.sacfedge.com/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
+    'https://edge-hls.doppiocdn.org/hls/{id}/master/{id}_auto.m3u8?playlistType=lowLatency',
 ]
+
+/**
+ * 广告分片的路径特征。
+ * 出现在媒体清单里就说明这一路拿到的是广告片（而不是该房间的直播流）。
+ */
+const scAdSegMark = '/cpa/'
 
 /** 每页多少个主播 */
 const scPageSize = 60
@@ -298,20 +314,33 @@ class scStripchatClass extends WebApiBase {
             backData.headers = headers
 
             let variants = []
+            let sawAd = false
             for (let i = 0; i < scEdgeMasters.length; i++) {
                 const master = scEdgeMasters[i].split('{id}').join(sid)
                 const r = await this.get(master)
                 const text = scAsText(r.data)
-                if (r.code === 200 && text.indexOf('#EXT-X-STREAM-INF') !== -1) {
-                    variants = this.parseVariants(text, master)
-                    if (variants.length) {
-                        break
-                    }
+                if (r.code !== 200 || text.indexOf('#EXT-X-STREAM-INF') === -1) {
+                    continue
                 }
+                const vs = this.parseVariants(text, master)
+                if (!vs.length) {
+                    continue
+                }
+                // 探一眼首档的真实分片清单：若出现广告分片特征，说明这个节点在给广告，换下一个
+                const probe = await this.get(vs[0].url)
+                const probeText = scAsText(probe.data)
+                if (probeText && probeText.indexOf(scAdSegMark) !== -1) {
+                    sawAd = true
+                    continue
+                }
+                variants = vs
+                break
             }
 
             if (!variants.length) {
-                backData.error = '拉不到直播清单，可能已下播或该地区被墙'
+                backData.error = sawAd
+                    ? '取到的是广告流（CDN 对未登录访客推的），换个主播或稍后再试'
+                    : '拉不到直播清单，可能已下播或该地区被墙'
                 return JSON.stringify(backData)
             }
 
