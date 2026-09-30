@@ -1,9 +1,9 @@
 [
   {
     "name": "[禁] GetAV",
-    "version": 3,
-    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
-    "webSite": "https://getav.net",
+    "version": 4,
+    "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；v4 提速：修掉「已探明的可用域名没参与排序」导致每次请求都从不通的域名重新试（实测每请求白等 43 秒）的问题——改为并行选路 + 请求加 10 秒超时，并按实测把可用域名排在前面",
+    "webSite": "https://getav.top",
     "instance": "getav2026",
     "order": "E",
     "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/GetAV.js",
