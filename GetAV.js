@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] GetAV
-//@version:4
+//@version:5
 //@webSite:https://getav.top
-//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。；v4 提速：修掉「已探明的可用域名没参与排序」导致每次请求都从不通的域名重新试（实测每请求白等 43 秒）的问题——改为并行选路 + 请求加 10 秒超时，并按实测把可用域名排在前面
+//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。；v5 修「进详情后过一会儿点播放就加载不出来」：实测正片直链是短时效签名地址（详情接口每次都签发新的，旧地址再拉必 502），改为播放时用番号现换一把新地址 —— 实测现取现拉 10/10 成功、放旧的 10/10 失败
 //@type:100
 //@instance:getav2026
 //@isAV:1
@@ -51,6 +51,47 @@ const gaDomains = [
  * 最坏也只是等 10 秒，不会像原来那样干等 42 秒（真机上 TCP 层超时可能更久）。
  */
 const gaTimeoutMs = 10000
+
+/**
+ * 播放直链「现换新地址」环节的超时（毫秒）。见 getVideoPlayUrl 的说明。
+ *
+ * 实测重取详情约 0.85 秒，8 秒足够宽裕；超时后沿用原地址（不会比现在更差）。
+ * 和 gaTimeoutMs 一样用应用层掐表 —— 不依赖运行环境怎么解释 req 的超时参数。
+ */
+const gaPlayRefreshMs = 8000
+
+/**
+ * 挂在播放地址上的自定义查询参数名。
+ *
+ * 🔴 为什么需要：2026-09-30 实测确认，GetAV 的正片直链是**短时效签名地址** ——
+ *   详情接口每次都会签发一把新的（连续 10 次请求拿到的 URL 全不相同），
+ *   而同一把地址放一会儿再拉就变成 `502 Bad Gateway`。
+ *   实测：现取现拉 10/10 成功，放旧的 10/10 失败。
+ *   用户看到的就是「进详情页磨蹭一会儿再点播放 → 一直加载不出来」。
+ *
+ * 修复办法：把番号与档位挂在 URL 上带进播放链路，播放时用它现换一把新的。
+ *   该 CDN **完全忽略查询参数**（带参与不带参返回字节数一致、内容相同，已实测），
+ *   所以挂这两个参数不影响播放 —— 万一换新失败继续沿用原地址，也照样能播。
+ */
+const gaCodeKey = 'gaid'
+const gaTypeKey = 'gatype'
+
+/**
+ * 给 Promise 套一层应用层超时，超时返回 null。
+ *
+ * 运行环境没有 setTimeout 时退化成原样返回（不会更差）。
+ */
+function gaWithTimeout(promise, ms) {
+    if (typeof setTimeout !== 'function') {
+        return promise
+    }
+    return Promise.race([
+        promise,
+        new Promise((resolve) => {
+            setTimeout(() => resolve(null), ms)
+        }),
+    ])
+}
 
 /** 封面 / 头像 / 片源所在的静态站 */
 const gaStaticHost = 'https://static.worldstatic.com'
@@ -316,7 +357,7 @@ class gaGetavClass extends WebApiBase {
                 }
             }
 
-            const playLines = this.buildPlayLines(data)
+            const playLines = this.buildPlayLines(data, code)
             const dateStr = String(data.date || '')
             const fullContent =
                 '【🔥 官方交流群: ' +
@@ -378,7 +419,46 @@ class gaGetavClass extends WebApiBase {
                 Referer: this.curHost() + '/',
                 Origin: this.curHost(),
             }
-            backData.data = playUrl
+
+            // 🔴 v5 核心修复：正片直链是短时效签名地址（详见顶部 gaCodeKey 的说明）。
+            // 详情页给出的地址只要放一会儿就会变成 502，所以这里用地址上带的番号
+            // **现换一把新的**；换不到（超时/接口异常/取不到档位）就沿用原地址 ——
+            // 因为参数不影响播放，沿用原地址的最坏结果也只是维持修复前的状态。
+            let finalUrl = playUrl
+            const tag = this.readPlayTag(playUrl)
+            if (tag.code) {
+                const r = await gaWithTimeout(
+                    this.apiGet('/api/movies/' + encodeURIComponent(tag.code)),
+                    gaPlayRefreshMs
+                )
+                const d = (r && r.json && r.json.data) || {}
+                const vs = d.videoSources || []
+                let pick = ''
+                for (let i = 0; i < vs.length; i++) {
+                    const v = vs[i] || {}
+                    if (tag.type && String(v.type || '') !== tag.type) {
+                        continue
+                    }
+                    const u = String(v.url || '').trim()
+                    if (u) {
+                        pick = u
+                        break
+                    }
+                }
+                if (!pick) {
+                    for (let i = 0; i < vs.length; i++) {
+                        const u = String((vs[i] || {}).url || '').trim()
+                        if (u) {
+                            pick = u
+                            break
+                        }
+                    }
+                }
+                if (pick) {
+                    finalUrl = pick
+                }
+            }
+            backData.data = finalUrl
         } catch (error) {
             backData.error = '获取播放地址失败～' + error.message
         }
@@ -546,7 +626,43 @@ class gaGetavClass extends WebApiBase {
         return typeof t === 'number' && t > 0 ? t : 9999
     }
 
-    buildPlayLines(data) {
+    /**
+     * 给播放直链挂上番号 / 档位（详见顶部 gaCodeKey 的说明）。
+     *
+     * 这两个参数只给 getVideoPlayUrl 自己看 —— 它据此现换一把新鲜的地址。
+     * 已实测该 CDN 忽略查询参数，所以挂上去不影响播放。
+     */
+    tagPlayUrl(url, code, type) {
+        const u = String(url || '').trim()
+        if (!u || !code) {
+            return u
+        }
+        const sep = u.indexOf('?') === -1 ? '?' : '&'
+        return (
+            u +
+            sep +
+            gaCodeKey +
+            '=' +
+            encodeURIComponent(code) +
+            '&' +
+            gaTypeKey +
+            '=' +
+            encodeURIComponent(type || '')
+        )
+    }
+
+    /** 从播放地址上读回番号 / 档位；老格式（没挂参数）返回空串 */
+    readPlayTag(url) {
+        const u = String(url || '')
+        const mc = u.match(new RegExp('[?&]' + gaCodeKey + '=([^&#]*)'))
+        const mt = u.match(new RegExp('[?&]' + gaTypeKey + '=([^&#]*)'))
+        return {
+            code: mc ? decodeURIComponent(mc[1]) : '',
+            type: mt ? decodeURIComponent(mt[1]) : '',
+        }
+    }
+
+    buildPlayLines(data, code) {
         const labelMap = {
             raw_1080p: '正片 1080P',
             raw_720p: '高清 720P',
@@ -572,7 +688,10 @@ class gaGetavClass extends WebApiBase {
             }
             seen[url] = 1
             const t = String(v.type || '')
-            items.push({ line: [labelMap[t] || t || '默认线路', url], rank: rankMap[t] || 0 })
+            items.push({
+                line: [labelMap[t] || t || '默认线路', this.tagPlayUrl(url, code, t)],
+                rank: rankMap[t] || 0,
+            })
         }
         if (!items.length) {
             const fbs = [
