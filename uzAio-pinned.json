@@ -32,12 +32,12 @@
     },
     {
       "name": "[禁] StripChat",
-      "version": 6,
-      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v6：彻底移除广告节点 doppiocdn（实测它是第三方广告服务器，域名解析到 38.60.148.x / 156.227.14.x、非 Cloudflare；v5 只把它降为兜底，sacfedge 一失败就仍会落到它、继续放广告），现在只用 sacfedge；并加固文本读取、报错时带上节点诊断；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时",
+      "version": 7,
+      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v7：修「点进去一直转圈、加载不出来」（播放链路不再多做那次广告探测请求，并加了应用层超时）；v6：彻底移除广告节点 doppiocdn；v5：拉流节点换回 sacfedge；v4 提速：域名复用 + 三线路并行竞速 + 10 秒超时",
       "webSite": "https://zh.stripchat.com",
       "instance": "stripchat2026",
       "order": "E",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/StripChat.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@c0b10d96ad71c321eca4c2879c1469eb463c9c89/StripChat.js",
       "type": 100
     },
     {
