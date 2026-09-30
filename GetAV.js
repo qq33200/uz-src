@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] GetAV
-//@version:3
-//@webSite:https://getav.net
-//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
+//@version:4
+//@webSite:https://getav.top
+//@remark:GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉。；v4 提速：修掉「已探明的可用域名没参与排序」导致每次请求都从不通的域名重新试（实测每请求白等 43 秒）的问题——改为并行选路 + 请求加 10 秒超时，并按实测把可用域名排在前面
 //@type:100
 //@instance:getav2026
 //@isAV:1
@@ -14,16 +14,43 @@ import { } from '../../core/uzUtils.js'
 // ignore
 
 /**
- * GetAV 官方发布页（getav.info）公布的 5 个入口，顺序即优先级。
- * 任一域名可用就会被记住，后续请求都用它；全部失败才会重新探测。
+ * GetAV 官方发布页（getav.info）公布的 5 个入口。
+ *
+ * 🔴 顺序不是随便排的，是 2026-09-30 实测结果（详见下方各条注释）：
+ *   getav.top   0.80~2.23s  ✅ 最快
+ *   getav.live  0.97~1.92s  ✅
+ *   getav.co    1.03~2.58s  ✅
+ *   getav.net   0.22s 即被 RST（ECONNRESET），拿不到任何响应
+ *   getav.me    **42 秒连接超时**：DNS 解析到 199.59.148.246（污染/停放 IP 段），
+ *               国内连接是黑洞 —— 实测每次都干等到超时，一次都没成功过
+ *
+ * ⚠️ 曾经的问题：原版把 getav.net / getav.me 排在第 1、2 位，而上面的取出逻辑是
+ *   「从第一条开始串行试」，于是**每一次** API 请求（翻页、进详情、搜索、二级分类）
+ *   都要先白等 0.22s + 42s 才能轮到可用的域名 ≈ 43 秒/请求。
+ *   这就是「GetAV 访问很慢」的真正原因，不是网络问题。
+ *
+ * 现在：① 实测可用的排前面、黑洞的降到末尾兜底；
+ *       ② 换域名时并行竞速，不再串行等超时；
+ *       ③ 选定后记住（_healedHost），后续请求单发直达。
+ *   保留全部 5 个不删 —— 官方入口会变，留着当兜底；就算全挂也有明确报错指引。
  */
 const gaDomains = [
-    'https://getav.net',
-    'https://getav.me',
+    'https://getav.top',
     'https://getav.live',
     'https://getav.co',
-    'https://getav.top',
+    'https://getav.net',
+    'https://getav.me',
 ]
+
+/**
+ * 单次请求超时（毫秒）。
+ *
+ * ⚠️ uz 的 `sendTimeout` / `receiveTimeout` 单位没有权威文档：读作毫秒时默认值 30000=30 秒，
+ * 读作秒时则几乎等于不超时。**唯一安全的取法是「两种读法下都不至于把正常请求掐掉」**，
+ * 所以取 10 秒 —— 正常一次请求约 1 秒，10 秒足够宽裕；而遇到 getav.me 那种黑洞时，
+ * 最坏也只是等 10 秒，不会像原来那样干等 42 秒（真机上 TCP 层超时可能更久）。
+ */
+const gaTimeoutMs = 10000
 
 /** 封面 / 头像 / 片源所在的静态站 */
 const gaStaticHost = 'https://static.worldstatic.com'
@@ -65,9 +92,37 @@ function gaParseJsonData(d) {
     return null
 }
 
-/** 把 req 的返回值安全地取成文本 */
+/**
+ * 把 req 的返回值安全地取成文本（HTML / m3u8 用）。
+ *
+ * 除了字符串，也要能吃二进制 —— uz 的 `req` 按响应头 content-type 决定 `data` 类型，
+ * 若站点在 Cloudflare 拦截页上没给 text/*，拿到的就是 ArrayBuffer。
+ * 那时这里若直接返回 ''，下面 describeFailure 的「被 Cloudflare 拦了」判断会一起失效，
+ * 用户只能看到一个含糊的「接口返回异常」。
+ */
 function gaAsText(d) {
-    return typeof d === 'string' ? d : ''
+    if (typeof d === 'string') {
+        return d
+    }
+    try {
+        if (d instanceof ArrayBuffer || ArrayBuffer.isView(d)) {
+            const u8 = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength)
+            let s = ''
+            for (let i = 0; i < u8.length; i++) {
+                s += String.fromCharCode(u8[i])
+            }
+            try {
+                return decodeURIComponent(escape(s))
+            } catch (e2) {
+                // 不是合法 UTF-8：退回逐字节字符串。诊断用的关键词（"Just a moment" 等）
+                // 都是 ASCII，这样照样能匹配上，总比返回空字符串强。
+                return s
+            }
+        }
+    } catch (e) {
+        return ''
+    }
+    return ''
 }
 
 /** 从 URL 里取「协议+域名」 */
@@ -81,6 +136,9 @@ class gaGetavClass extends WebApiBase {
         super()
         // 自愈到可用域名后记在这里，后续请求都用它
         this._healedHost = ''
+        // 正在进行的「并行选路」任务。同一时刻并发进来的多个请求共用它，
+        // 避免各自发起一轮选路（否则搜索页那种一次并发 4 个请求的场景会打 4 倍请求）
+        this._raceTask = null
     }
 
     //MARK: - 首页分类
@@ -614,8 +672,27 @@ class gaGetavClass extends WebApiBase {
         return i === -1 ? gaDomains[0] : this._domains()[i]
     }
 
+    /**
+     * 返回当前要尝试的域名顺序。
+     *
+     * 🔴 关键修复点：`_healedHost` 必须参与排序。
+     * 原版把「探测到的可用域名」记在 `_healedHost` 里，但这个方法完全不看它 ——
+     * 于是每次请求都还是从列表第一条（一个不通的域名）重新开始试，
+     * 等于自愈白做了。实测代价：每请求 +43 秒。
+     */
     _domains() {
-        return this._domainOrder || gaDomains
+        const base = this._domainOrder || gaDomains
+        const h = this._healedHost
+        if (!h) {
+            return base
+        }
+        let out = [h]
+        for (let i = 0; i < base.length; i++) {
+            if (base[i] !== h) {
+                out.push(base[i])
+            }
+        }
+        return out
     }
 
     _indexOfDomain(host) {
@@ -641,11 +718,58 @@ class gaGetavClass extends WebApiBase {
     }
 
     /**
-     * 对齐原 py 的 _request_with_failover：
-     * 直接在各个域名上请求**目标路径**，谁先返回可用 JSON 就用谁，并记住这个域名。
-     * 不再做额外的「探测请求」——探测会多打一次接口，反而更容易触发风控。
+     * 取接口。三层策略，按「已知可用 → 并行选路 → 串行兜底」递进：
+     *
+     * ① 已记住可用域名（`_healedHost`）：单发一次，成功即返回 —— 日常路径，1 个请求。
+     * ② 还不认识路：所有域名**并行竞速**，谁先返回可用 JSON 用谁 —— 约 1 秒出结果，
+     *    不再像原版那样串行干等（原版最坏 = 0.22s + 42s + 1s ≈ 43 秒/请求）。
+     *    同一时刻并发进来的多个请求共用同一次竞速，不会各选各的。
+     * ③ 竞速全败：退回串行逐个试（保底，也能把逐条失败原因收集齐）。
+     *
+     * 三个分支都遵循原版同一原则：**不额外打探测请求**，永远请求目标路径本身。
      */
     async apiGet(path) {
+        // ① 快路径：已探明域名直接单发
+        if (this._healedHost) {
+            const r = await this.get(this._healedHost + path)
+            const json = gaParseJsonData(r.data)
+            if (json) {
+                return { json: json, error: '' }
+            }
+            // 这个域名失效了，清掉，重新选路
+            this._healedHost = ''
+        }
+
+        // ② 已经有一轮选路在跑：等它出结果，再用选出的域名单发本路径
+        if (this._raceTask) {
+            await this._raceTask
+            if (this._healedHost) {
+                const r = await this.get(this._healedHost + path)
+                const json = gaParseJsonData(r.data)
+                if (json) {
+                    return { json: json, error: '' }
+                }
+                this._healedHost = ''
+            }
+            return await this.serialApi(path)
+        }
+
+        // ③ 发起一轮选路（必须同步赋值，否则同时进来的调用看不到它）
+        let res = null
+        this._raceTask = this.raceApi(path)
+        try {
+            res = await this._raceTask
+        } finally {
+            this._raceTask = null
+        }
+        if (res && res.json) {
+            return res
+        }
+        return await this.serialApi(path)
+    }
+
+    /** 串行兜底：只在并行竞速全失败时走，用来把逐条失败原因收集齐 */
+    async serialApi(path) {
         const ds = this._domains()
         let last = null
         for (let i = 0; i < ds.length; i++) {
@@ -660,6 +784,51 @@ class gaGetavClass extends WebApiBase {
         return { json: null, error: this.describeFailure(last) }
     }
 
+    /**
+     * 并行竞速：所有域名同时请求同一路径，第一个返回「可用 JSON」的胜出并被记住。
+     *
+     * 判据必须是「真的解析出了 JSON」，不能只看「响应快」——
+     * 否则会把「回得快但内容是错误页」的域名记成可用域名，后续全盘走错。
+     */
+    raceApi(path) {
+        const ds = this._domains()
+        const self = this
+        return new Promise(function (resolve) {
+            if (!ds.length) {
+                resolve({ json: null, error: '没有可用的域名' })
+                return
+            }
+            let done = false
+            let pending = ds.length
+            let last = null
+            for (let i = 0; i < ds.length; i++) {
+                const host = ds[i]
+                self
+                    .get(host + path)
+                    .then(function (r) {
+                        if (done) {
+                            return
+                        }
+                        const json = gaParseJsonData(r.data)
+                        if (json) {
+                            done = true
+                            self._healedHost = host
+                            resolve({ json: json, error: '' })
+                        } else {
+                            last = r
+                        }
+                    })
+                    .catch(function () {})
+                    .then(function () {
+                        pending--
+                        if (!done && pending === 0) {
+                            resolve({ json: null, error: self.describeFailure(last) })
+                        }
+                    })
+            }
+        })
+    }
+
     async get(url) {
         const origin = gaOriginOf(url) || this.curHost()
         try {
@@ -671,6 +840,10 @@ class gaGetavClass extends WebApiBase {
                     Origin: origin,
                     Referer: origin + '/',
                 },
+                // 显式超时：原版不传，遇到 getav.me 那种黑洞域名时由 App 默认值决定，
+                // 实测本机就要干等 42 秒（真机 TCP 层超时可能更久）。10 秒是安全取值。
+                sendTimeout: gaTimeoutMs,
+                receiveTimeout: gaTimeoutMs,
             })
             return { code: p.code, data: p.data, error: p.error || '' }
         } catch (e) {
