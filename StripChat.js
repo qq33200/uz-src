@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] StripChat
-//@version:6
+//@version:7
 //@webSite:https://zh.stripchat.com
-//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v6：彻底移除广告节点 doppiocdn（v5 只把它降为兜底，真机上 sacfedge 一旦失败仍会落到它、继续放广告），并加固文本读取（真机 m3u8 可能不是字符串，会让广告检测失效）；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时
+//@remark:StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v7：修「视频一直转圈加载不出来」——v5 加进来的「广告探测」给播放链路多加了一次请求（v3 原版没有这步），真机上它一旦连上不响应，播放地址就永远拿不到；现改为「实测只给真实流的节点直接放行、不探测」，并把播放链路的等待掐上应用层超时，保证最坏也能给出明确原因（提示里带版本号，便于确认 App 跑的是哪一版）；v6：彻底移除广告节点 doppiocdn；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时
 //@type:100
 //@instance:stripchat2026
 //@isAV:1
@@ -47,8 +47,21 @@ const scEdgeMasters = [
  */
 const scAdSegMark = '/cpa/'
 
-/** 版本标记，会显示在详情页正文里 —— 方便确认 App 里跑的是哪一版（排查用） */
-const scVersionTag = 'v6'
+/**
+ * 「实测只给真实流」的节点白名单 —— 这些节点**不做广告探测**，拿到 master 直接用。
+ *
+ * 🔴 为什么必须白名单跳过探测（2026-09-28 v7 踩到）：
+ *   探测（= 再拉一次首档的媒体清单）是 v5 才加的一步，**v3 原版没有这一步**。
+ *   真机上它一旦「连上但不响应」（LL-HLS 服务端 holding 请求 / 线路抽风），
+ *   `getVideoPlayUrl` 就**永远不返回** —— 播放器表现恰好是「一直转圈、加载不出来」，
+ *   而且比 v3 更糟（v3 播放路径只打一次 master，不会卡在这）。
+ *   既然 sacfedge 已被实测证明给的是真实流，就没必要每次播放都赌这一次额外请求。
+ *   探测保留给「非白名单」节点用（万一以后加节点）。
+ */
+const scTrustedNodes = ['edge-hls.sacfedge.com']
+
+/** 版本标记，会显示在详情页正文与出错提示里 —— 方便确认 App 里跑的是哪一版（排查用） */
+const scVersionTag = 'v7'
 
 /** 每页多少个主播 */
 const scPageSize = 60
@@ -81,6 +94,21 @@ const scUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101
  * 若某条线路是「连上但不响应」的黑洞，不传超时就要干等默认值（毫秒读法下 30 秒）。
  */
 const scTimeoutMs = 10000
+
+/**
+ * 播放链路「应用层」超时（毫秒）。
+ *
+ * 和 scTimeoutMs 的区别：这个不依赖 req 的参数语义（那两参数的单位官方没定论），
+ * 而是在扩展里自己掐表 —— 无论运行环境怎么解释 sendTimeout/receiveTimeout，
+ * 都保证**给出一个结果**（哪怕是错误），绝不让 getVideoPlayUrl 永远不返回。
+ *
+ * 为什么非要有：播放器收不到任何东西 = 一直转圈，用户看到的就是「加载不出来」，
+ * 而且我们连失败原因都拿不到。有它就能把「哪一步卡住」写进 error 里。
+ * 只有运行环境没有 setTimeout 时才退化成原行为（不会更糟）。
+ *
+ * 15 秒：master 清单实测 0.4~1.5s，留足余量，只用于兜住「连上不响应」。
+ */
+const scPlayTimeoutMs = 15000
 
 /**
  * 把 req 的返回值安全地解析成 JSON 对象。
@@ -377,10 +405,10 @@ class scStripchatClass extends WebApiBase {
             for (let i = 0; i < scEdgeMasters.length; i++) {
                 const node = this.hostOf(scEdgeMasters[i])
                 const master = scEdgeMasters[i].split('{id}').join(sid)
-                const r = await this.get(master)
+                const r = await this.withTimeout(this.get(master), scPlayTimeoutMs, node)
                 const text = scAsText(r.data)
                 if (r.code !== 200 || text.indexOf('#EXT-X-STREAM-INF') === -1) {
-                    diag.push(node + ' HTTP' + r.code + (text ? ' 无清单' : ' 空响应'))
+                    diag.push(node + ' HTTP' + r.code + (text ? ' 无清单' : ' 空响应') + (r.error ? ' ' + r.error : ''))
                     continue
                 }
                 const vs = this.parseVariants(text, master)
@@ -388,23 +416,30 @@ class scStripchatClass extends WebApiBase {
                     diag.push(node + ' 无档位')
                     continue
                 }
-                // 探一眼首档的真实分片清单：若出现广告分片特征，说明这一路在给广告，不用它
-                const probe = await this.get(vs[0].url)
-                const probeText = scAsText(probe.data)
-                if (probeText && probeText.indexOf(scAdSegMark) !== -1) {
-                    sawAd = true
-                    diag.push(node + ' 广告流已拦下')
-                    continue
+                // 只有「非白名单节点」才探一眼首档的分片清单确认不是广告。
+                // 白名单节点（实测只给真实流的）直接放行 —— 少打一次请求，也就少一个卡死的可能，
+                // 播放路径与 v3 原版完全一致。
+                if (scTrustedNodes.indexOf(node) === -1) {
+                    const probe = await this.withTimeout(this.get(vs[0].url), scPlayTimeoutMs, node + ' 广告探测')
+                    const probeText = scAsText(probe.data)
+                    if (probeText && probeText.indexOf(scAdSegMark) !== -1) {
+                        sawAd = true
+                        diag.push(node + ' 广告流已拦下')
+                        continue
+                    }
                 }
                 variants = vs
                 break
             }
 
             if (!variants.length) {
-                backData.error = sawAd
-                    ? '取到的是广告流（CDN 推的），已拦下不给播放。请换个主播或稍后再试'
-                    : '拉不到直播清单，可能已下播，或当前网络连不上拉流节点' +
-                      (diag.length ? '（' + diag.join('；') + '）' : '')
+                // 带上版本号：用户一看报错就能确认 App 里跑的是哪一版（排查用）
+                backData.error =
+                    '[扩展 ' + scVersionTag + '] ' +
+                    (sawAd
+                        ? '取到的是广告流（CDN 推的），已拦下不给播放。请换个主播或稍后再试'
+                        : '拉不到直播清单，可能已下播，或当前网络连不上拉流节点' +
+                          (diag.length ? '（' + diag.join('；') + '）' : ''))
                 return JSON.stringify(backData)
             }
 
@@ -953,6 +988,46 @@ class scStripchatClass extends WebApiBase {
             return '三条线路都连不上（' + (r.error || '网络错误') + '）'
         }
         return '接口返回异常（HTTP ' + r.code + '）'
+    }
+
+    /**
+     * 给一个 Promise 套一层「应用层超时」，保证**一定会有结果返回**。
+     *
+     * 只用于播放链路：这里任何一步卡住，用户看到的就是「一直转圈、加载不出来」，
+     * 而且拿不到任何失败信息。套上之后最坏情况会给出一句明确的错误原因。
+     *
+     * 不依赖 req 的 sendTimeout/receiveTimeout（那两个参数的单位官方没有定论），
+     * 而是扩展自己掐表 —— 两种解释下都能兜住。
+     * 若运行环境没有 setTimeout，则原样返回该 Promise（退化成原行为，不会更糟）。
+     *
+     * @param {Promise} p 原始请求 Promise
+     * @param {number} ms 毫秒
+     * @param {string} tag 出错时带上，标明是哪一步
+     */
+    withTimeout(p, ms, tag) {
+        if (typeof setTimeout !== 'function') {
+            return p
+        }
+        return new Promise((resolve) => {
+            let done = false
+            setTimeout(() => {
+                if (!done) {
+                    done = true
+                    resolve({ code: -1, data: null, error: '超时 ' + ms + 'ms（' + (tag || '') + '）' })
+                }
+            }, ms)
+            p.then((r) => {
+                if (!done) {
+                    done = true
+                    resolve(r)
+                }
+            }).catch((e) => {
+                if (!done) {
+                    done = true
+                    resolve({ code: -1, data: null, error: String((e && e.message) || e) })
+                }
+            })
+        })
     }
 
     /**
