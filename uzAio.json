@@ -22,9 +22,9 @@
     },
     {
       "name": "[禁] GetAV",
-      "version": 3,
-      "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
-      "webSite": "https://getav.net",
+      "version": 5,
+      "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；v5 修「进详情后过一会儿点播放就加载不出来」：实测正片直链是短时效签名地址（详情接口每次都签发新的，旧地址再拉必 502），改为播放时用番号现换一把新地址",
+      "webSite": "https://getav.top",
       "instance": "getav2026",
       "order": "E",
       "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/GetAV.js",
@@ -32,8 +32,8 @@
     },
     {
       "name": "[禁] StripChat",
-      "version": 7,
-      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v7：修「点进去一直转圈、加载不出来」——v5 给播放链路额外加的那次「广告探测」请求是 v3 原版没有的，真机上它一旦连上不响应，播放地址就永远拿不到；现改为「实测只给真实流的节点直接放行、不探测」，并给播放链路加应用层超时，最坏也能给出明确失败原因（提示里带版本号，便于确认 App 里跑的是哪一版）；v6：彻底移除广告节点 doppiocdn（实测是第三方广告服务器，解析到 38.60.148.x / 156.227.14.x、非 Cloudflare）；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时",
+      "version": 6,
+      "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v6：彻底移除广告节点 doppiocdn（实测它是第三方广告服务器，域名解析到 38.60.148.x / 156.227.14.x、非 Cloudflare；v5 只把它降为兜底，sacfedge 一失败就仍会落到它、继续放广告），现在只用 sacfedge；并加固文本读取、报错时带上节点诊断；v5：拉流节点换回 sacfedge；v4 提速：①已探明的可用域名优先复用 ②线路未知时三域名并行竞速 ③请求加 10 秒超时",
       "webSite": "https://zh.stripchat.com",
       "instance": "stripchat2026",
       "order": "E",
