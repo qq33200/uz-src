@@ -1,0 +1,11 @@
+[
+  {
+    "name": "路漫漫动漫",
+    "version": 1,
+    "remark": "路漫漫动漫（lmm85）TVBox py 源移植。8 个分类 + 年份/排序筛选 + 站内搜索；详情 2~4 条线路；播放走云播解析器现取直链（vod_play_url 只存标识，不存会过期的签名地址）。已剔除广告线路（adkwai 一族解析出来的是真广告片）与解析器已停用的两条线路（migu/wxv）。接口双域名自动切换。v1。",
+    "webSite": "https://www.lmm85.com",
+    "order": "I",
+    "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@main/Lmm.js",
+    "type": 101
+  }
+]
