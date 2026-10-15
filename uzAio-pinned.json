@@ -1,53 +1,53 @@
 {
   "vod": [
     {
-      "name": "[禁] 一锅端聚合",
+      "name": "[禁] 一锅端聚合（挂梯）",
       "version": 2,
       "remark": "51 站聚合（短剧/影视/成人/音频/动漫）。uz 无文件夹卡片机制，故把站点直接作为一级分类（按原版 6 大类聚簇排序 + 前缀），站内分类走筛选面板；播放头严格透传官方防盗链签名 x-aggr-sig；本版修正：顶层变量全部加专属前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）",
       "webSite": "https://av.telstra.com.cv",
       "instance": "yiguoduan2026",
       "order": "E",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/Yiguoduan.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/Yiguoduan.js",
       "type": 100
     },
     {
-      "name": "[禁] 蝴蝶影院",
+      "name": "[禁] 蝴蝶影院（挂梯）",
       "version": 2,
       "remark": "PTT01 系列站，动态域名自愈，带类型/地区/年份筛选。v2 修正请求超时参数",
       "webSite": "https://ptt01.com",
       "instance": "hudieyingyuan2026",
       "order": "E",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@2d3dc183759ca869b1edba09f7100cbd865cf38e/Hudie_yingyuan.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/Hudie_yingyuan.js",
       "type": 100
     },
     {
-      "name": "[禁] GetAV",
+      "name": "[禁] GetAV（挂梯）",
       "version": 5,
       "remark": "GetAV（蝴蝶影视专线）JAV 库，5 域名自愈 + 排序/字幕/画质筛选。停用可在源列表里删掉；v5 修「进详情后过一会儿点播放就加载不出来」：实测正片直链是短时效签名地址（详情接口每次都签发新的，旧地址再拉必 502），改为播放时用番号现换一把新地址",
       "webSite": "https://getav.top",
       "instance": "getav2026",
       "order": "E",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@6933468b582c85f03104656ab9934ca8dd524930/GetAV.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/GetAV.js",
       "type": 100
     },
     {
-      "name": "[禁] StripChat",
+      "name": "[禁] StripChat（挂梯）",
       "version": 7,
       "remark": "StripChat 直播，三域名自愈，按国家/标签筛选。播放直连官方 HLS，不需要代理。；v7：修「点进去一直转圈、加载不出来」（播放链路不再多做那次广告探测请求，并加了应用层超时）；v6：彻底移除广告节点 doppiocdn；v5：拉流节点换回 sacfedge；v4 提速：域名复用 + 三线路并行竞速 + 10 秒超时",
       "webSite": "https://zh.stripchat.com",
       "instance": "stripchat2026",
       "order": "E",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@c0b10d96ad71c321eca4c2879c1469eb463c9c89/StripChat.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/StripChat.js",
       "type": 100
     },
     {
-      "name": "[禁] 蝴蝶·BestJavPorn",
+      "name": "[禁] 蝴蝶·BestJavPorn（挂梯）",
       "version": 4,
       "remark": "7 分类；详情页 rocketlazyload → videplay 嵌入页；播放时现解直链（详情不落 token，防过期）。v4 修「点播放报『播放页里没有 m3u8 地址』」：站点在 2026-10-15 把播放器整条换掉了——旧的 pox/dp + AES 已经下线（页面里连这两个变量都没有了），先按实测把新方案完整实现（嵌入页 mvarr 混淆串 → 播放页 → 解开 packer 拿 links），并**验内容而不是只看状态码**：links 里的 hls4 实测是纯广告流（清单 1438 个分片全是 tiktokcdn 的 .image 广告图），已排除不用，只用实测为真片的 hls3/hls2；万一还没解出来，就把播放页交给 App 的网页嗅探兜底。v3 顶层变量全部加 bj 前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）；v2 失败原因可见（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）",
       "webSite": "https://bestjavporn.me",
       "instance": "bestjav2026",
       "order": "F",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@d1dcfe4fcc4fb540b91ae56f4bcd7b6ab52981c1/Hudie_bestjav.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/Hudie_bestjav.js",
       "type": 100
     },
     {
@@ -88,39 +88,39 @@
       "type": 101
     },
     {
-      "name": "蝴蝶·成人卡通",
+      "name": "蝴蝶·成人卡通（挂梯）",
       "version": 1,
       "remark": "CartoonPorno（cartoonporno.cc）TVBox py 源移植。7 个一级分类 + 排序/746 个分类筛选面板 + 站内搜索；详情页直接给出正片直链。两处按实测做的加固：① 修正原版卡片解析的错位 bug（原版按 img[data-vid] 切块，把 a[title] 甩到前一块，导致 vid 与标题/详情路径错开一格、点进去是别的片）；② 播放直链实测约 1/3 概率随机 403（服务端多节点抖动，同一地址重试即可，重取详情换签名反而更差 67%→58%），故播放时并行预检 3 路，成功率 67%→97%。播放头必须带 Referer（不带的话服务端只回一个 10 秒的提示流 tip.ts）。原版的域名自愈源头（x99dh.* 导航站）已失效（现全 500 或跳广告页），故以 cartoonporno.cc 为主域名并保留自愈兜底。v1。",
       "webSite": "https://www.cartoonporno.cc",
       "order": "J",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@37f4dc0995b5b06c1e2fca3a8f9b53b083b02165/CartoonPorno.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/CartoonPorno.js",
       "type": 101
     },
     {
-      "name": "FCJAV",
+      "name": "FCJAV（挂梯）",
       "version": 1,
       "remark": "FCJAV（fcjav.com）TVBox py 源移植，16 个分类 + 站内搜索 + 分页。播放链路比原版深了两层，已按实测重写：详情页取 filmId/__pt/__pk → POST /ajax/player 拿 player_enc → base64+XOR(pk) 解出播放器 iframe → iframe 里的 data-api（f4stream v2 播放器，原版找的 var urlPlay 已不存在）→ GET /api/play/<id>?ab=0&ad=0&n=1 换播放地址。三条实测结论都写进了实现：① 这条链路上「ab/ad/r 参数缺一个就 403」；② n=1 才是给原生播放器（无 MSE）的开放链接，不加 n 时 /v/<token> 会因缺 Origin 被 403；③ 换来的 /v/<token> 只活 300 秒（实测 T+300s 变 410 Playback link expired），而 pt 疑似一次性（响应里带 next_pt/next_pk），故播放标识只存必要的几个字段、播放时现走链路，绝不存会过期的地址。v1。",
       "webSite": "https://fcjav.com",
       "order": "K",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@d1dcfe4fcc4fb540b91ae56f4bcd7b6ab52981c1/FcjAV.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/FcjAV.js",
       "type": 101
     },
     {
-      "name": "浮生影院",
+      "name": "浮生影院（挂梯）",
       "version": 1,
       "remark": "浮生影院（tv.fushengr.cc）TVBox py 源移植。12 个一级分类（每类带细分子频道筛选）+ 站内搜索；详情页从 window.__ARCHIVE_PLAYER__ 取正片路径、从 var cdn_lines 取多线路。按实测做的三处修正：① 站点分类页其实没有分页（?page=N 与 /page/N/ 返回的完全是同一批内容，后者甚至 404），原版照着「翻页」写会无限翻同一页，故每类只给一页；② 原版硬编码的兜底线路 d32bg2g0w9aqg4.cloudfront.net 已死（连接直接失败），已换成实测可用的 vsdsq.tjacq.com；③ 站点 cdn_lines 里第二条线的地址本身是坏的（https:/dfdf.tjacq.com，少一个斜杠），已过滤，避免点开必失败。播放直链实测为静态地址（两次取详情完全一致），故详情直接给直链，播放时先探一次、挂了再回详情重取。v1。",
       "webSite": "https://tv.fushengr.cc",
       "order": "L",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@d1dcfe4fcc4fb540b91ae56f4bcd7b6ab52981c1/Fusheng.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/Fusheng.js",
       "type": 101
     },
     {
-      "name": "911爆料",
+      "name": "911爆料（挂梯）",
       "version": 1,
       "remark": "911爆料网（catch.belwfufv.cc）TVBox py 源移植。23 个吃瓜/爆料分类 + 站内搜索 + 分页；详情页从播放器 data-config 里取正片 HLS 直链。原版重度依赖 TVBox 的 localProxy + AES 解密来代理封面，uz 没有这套机制，故：① 列表页**不出封面**（实测该站封面全部是 AES 加密图、单张约 155KB、30 张 base64 后要 6MB，塞进列表会拖垮加载，且站点没有任何缩略图/明文路径可选、query 参数也被忽略），标题信息量足够，列表因此只发 1 个请求、秒开；② 详情页会**现拉现解**那一张封面（uz 官方支持 data:image base64 封面，实测解密结果就是合法 JPEG）。域名池会波动（同一批 7 个域名，一次实测 3 个活、隔一会儿 6 个活），故按顺序自愈。正片直链实测是「每次重签发但长期有效」的形态（同一把地址 10 分钟后仍可用），故详情直接给直链、播放时挂了再回详情重取。v1。",
       "webSite": "https://catch.belwfufv.cc",
       "order": "M",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@d1dcfe4fcc4fb540b91ae56f4bcd7b6ab52981c1/Bao911.js",
+      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/Bao911.js",
       "type": 101
     }
   ]
