@@ -1,8 +1,8 @@
 // ignore
 //@name:[禁] 蝴蝶·BestJavPorn
-//@version:3
+//@version:4
 //@webSite:https://bestjavporn.me
-//@remark:7 分类 · 列表 → 详情页 rocketlazyload → /xx/ 嵌入页 pox+dp；播放时实时 AES-256-CBC 解密直出 m3u8（详情不落 token，防过期）；v2 失败原因可见（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）；v3 顶层变量全部加 bj 前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）
+//@remark:7 分类；详情页 rocketlazyload → videplay 嵌入页；播放时现解直链（详情不落 token，防过期）。v4 修「点播放报『播放页里没有 m3u8 地址』」：站点在 2026-10-15 把播放器整条换掉了——旧的 pox/dp + AES 已经下线（页面里连这两个变量都没有了），先按实测把新方案完整实现（嵌入页 mvarr 混淆串 → 播放页 → 解开 packer 拿 links），并**验内容而不是只看状态码**：links 里的 hls4 实测是纯广告流（清单 1438 个分片全是 tiktokcdn 的 .image 广告图），已排除不用，只用实测为真片的 hls3/hls2；万一还没解出来，就把播放页交给 App 的网页嗅探兜底。v3 顶层变量全部加 bj 前缀，修掉与其他扩展在 uz 共享作用域里的重名冲突（redeclaration）；v2 失败原因可见（网络阻断 / Cloudflare 人机验证 / HTTP 状态码）
 //@type:100
 //@instance:bestjav2026
 //@isAV:1
@@ -308,6 +308,225 @@ function bestjavAesDecrypt(pox, dpB64) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// v4 新增：站点在 2026-10-15 把播放器整条换掉了
+//
+// 旧方案（嵌入页里的 `let pox` / `let dp` + AES-256-CBC）已经下线，页面里连这两个变量都没有了。
+// 新链路三层，全部按实测重写：
+//
+//   ① 详情页的 data-rocketlazyloadscript(base64) 里仍然是 defaultUrl，
+//      指向 api.videplay.us/embed/<token>（这层没变，extractEmbedUrl 照旧可用）
+//   ② 该嵌入页里 mvarr['42_1'|'38_1'|'37_1'] = [[id, 混淆串, iframe 前缀, URL 前缀, URL 后缀, …]]
+//      混淆串的解法 = 每个 token「按 radix 进制 parseInt → 异或 xor → fromCharCode」得到一段 base64，
+//      再用**页面当次现给**的 key/iv 做 AES-CBC + Pkcs7 解密 → 播放页的 token。
+//      radix / xor / key / iv 每次请求都会换，所以必须当场从页面里刮；
+//      下面的实现不认变量名，只认「页面里 2~36 的小整数」和「页面里的 16 位 hex 串」，
+//      靠「解出来是不是合法 base64 / 是不是像 token」自校验，站点改变量名也不受影响。
+//   ③ 播放页是 packer 打包的（`eval(function(p,a,c,k,e,d){…}('…',a,c,'w0|w1'.split('|'),0,{}))`），
+//      解开后有 links = {hls2, hls3, hls4}。
+//
+// 🔴 换线路必须验「内容」而不是「快不快」——这里是活生生的例子：
+//    hls4 实测是**纯广告流**（清单 1438 个分片全是 tiktokcdn 的 .image 广告图），
+//    但它响应最快、也有一份格式完全合法的 m3u8，只看状态码/格式会全绿放行，
+//    真机就是从片头一直放广告。已排除不用。
+//    hls3 才是正片：分片名伪装成 .woff2，实测 content-type 是 video/MP2T、
+//    首字节 0x47（MPEG-TS 同步字）、单分片约 1MB。所以候选顺序 hls3 → hls2。
+// 🔴 这些 CDN 的清单**必须带 Referer**（实测不带 404，带任意 Referer 都能过），
+//    本扩展播放链路里本来就有 Referer: bjSite + '/'，够用。
+// ---------------------------------------------------------------------------
+
+/**
+ * 解开站点用的 packer（纯字符串替换，不使用 eval）。
+ * 形如：eval(function(p,a,c,k,e,d){while(c--)if(k[c])p=p.replace(new RegExp('\\b'+c.toString(a)+'\\b','g'),k[c]);return p}('载荷',36,N,'w0|w1|…'.split('|'),0,{}))
+ * @returns {string} 解不开返回空串
+ */
+function bjUnfoldPacker(src) {
+    const m = String(src == null ? '' : src).match(
+        /eval\(function\(p,a,c,k,e,[a-z]\)\{[^}]*\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\)/
+    )
+    if (!m) return ''
+    const radix = parseInt(m[2], 10)
+    const count = parseInt(m[3], 10)
+    if (!(radix >= 2 && radix <= 36) || !count) return ''
+    let p = m[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+    const words = m[4].split('|')
+    for (let n = count - 1; n >= 0; n--) {
+        if (!words[n]) continue
+        try {
+            p = p.replace(new RegExp('\\b' + n.toString(radix) + '\\b', 'g'), words[n])
+        } catch (e) {
+            return ''
+        }
+    }
+    return p
+}
+
+/** 混淆串第一步：按 radix 进制逐个 token 解析 → 异或 xor → 取字符 */
+function bjMvarrDeobf(obf, radix, xor) {
+    const parts = String(obf).split(String.fromCharCode(radix + 97))
+    let out = ''
+    for (let i = 0; i < parts.length; i++) {
+        const n = parseInt(parts[i], radix)
+        if (!isFinite(n)) return ''
+        out += String.fromCharCode((n ^ xor) & 0xff)
+    }
+    return out
+}
+
+/** AES-CBC + Pkcs7 解一段 base64（key/iv 都是 16 字节 ASCII 口令） */
+function bjAesCbcUtf8(b64, keyStr, ivStr) {
+    try {
+        const d = Crypto.AES.decrypt(b64, Crypto.enc.Utf8.parse(keyStr), {
+            iv: Crypto.enc.Utf8.parse(ivStr),
+            mode: Crypto.mode.CBC,
+            padding: Crypto.pad.Pkcs7,
+        })
+        return d.toString(Crypto.enc.Utf8)
+    } catch (e) {
+        return ''
+    }
+}
+
+/** 从嵌入页里刮解码参数：候选进制（页面里 2~36 的整数）与候选 key/iv（16 位 hex 串） */
+function bjScrapeDecodeParams(html) {
+    const radixes = []
+    const hexes = []
+    const src = String(html == null ? '' : html)
+    let m
+    const reN = /([A-Za-z_$][\w$]*)\s*=\s*(\d{1,3})\s*(?=[;,\r\n])/g
+    while ((m = reN.exec(src)) !== null) {
+        const v = parseInt(m[2], 10)
+        if (v >= 2 && v <= 36 && radixes.indexOf(v) === -1) radixes.push(v)
+    }
+    const reH = /['"]([0-9a-fA-F]{16})['"]/g
+    while ((m = reH.exec(src)) !== null) {
+        if (hexes.indexOf(m[1]) === -1) hexes.push(m[1])
+    }
+    return { radixes: radixes, hexes: hexes }
+}
+
+/** 拿一条混淆串把整套参数（radix / xor / key / iv）试出来，靠结果自校验 */
+function bjSolveMvarrParams(obf, radixes, hexes) {
+    const keys = []
+    for (let i = 0; i < hexes.length; i++) {
+        for (let j = 0; j < hexes.length; j++) {
+            if (i !== j) keys.push([hexes[i], hexes[j]])
+        }
+    }
+    if (!keys.length) return null
+    for (let r = 0; r < radixes.length; r++) {
+        const radix = radixes[r]
+        if (String(obf).indexOf(String.fromCharCode(radix + 97)) === -1) continue
+        for (let x = 0; x < 256; x++) {
+            const b64 = bjMvarrDeobf(obf, radix, x)
+            if (!b64 || b64.length % 4 !== 0 || !/^[A-Za-z0-9+/=]+$/.test(b64)) continue
+            for (let k = 0; k < keys.length; k++) {
+                const plain = bjAesCbcUtf8(b64, keys[k][0], keys[k][1])
+                if (plain && /^[A-Za-z0-9\-_.]{6,200}$/.test(plain)) {
+                    return { radix: radix, xor: x, key: keys[k][0], iv: keys[k][1] }
+                }
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * 嵌入页 → 播放页 URL 列表（解不出来返回空数组）
+ * @returns {{name: string, url: string}[]}
+ */
+function bjResolveMvarrTargets(html) {
+    const src = String(html == null ? '' : html)
+    const reE = /mvarr\['([\d_]+)'\]\s*=\s*\[\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'[^']*'\s*,\s*'([^']*)'\s*,\s*'([^']*)'/g
+    const entries = []
+    let m
+    while ((m = reE.exec(src)) !== null) {
+        entries.push({ key: m[1], obf: m[3], urlPre: m[4], suf: m[5] })
+    }
+    if (!entries.length) return []
+    const p = bjScrapeDecodeParams(src)
+    if (!p.hexes.length || !p.radixes.length) return []
+
+    // 先用最长的那条把参数解出来，其余条目用同一套参数（同一次响应里是同一套）
+    let probe = entries[0]
+    for (let i = 1; i < entries.length; i++) {
+        if (entries[i].obf.length > probe.obf.length) probe = entries[i]
+    }
+    const solved = bjSolveMvarrParams(probe.obf, p.radixes, p.hexes)
+    if (!solved) return []
+
+    // 服务端标识（CD1/CD2…）页面里 spServers 给了；没有就按顺序编号
+    const names = {}
+    const reS = /"code"\s*:\s*"([A-Za-z0-9]{1,4})"[^}]*"key"\s*:\s*"([\d_]+)"/g
+    let s
+    while ((s = reS.exec(src)) !== null) names[s[2]] = s[1]
+
+    const out = []
+    for (let i = 0; i < entries.length; i++) {
+        const en = entries[i]
+        const b64 = bjMvarrDeobf(en.obf, solved.radix, solved.xor)
+        if (!b64) continue
+        const plain = bjAesCbcUtf8(b64, solved.key, solved.iv)
+        if (!plain || !/^[A-Za-z0-9\-_.]{6,200}$/.test(plain)) continue
+        out.push({
+            name: names[en.key] || '线路' + (out.length + 1),
+            url: bjAbsUrl(en.urlPre + plain + en.suf),
+        })
+    }
+    return out
+}
+
+/** 一串 m3u8 清单里有没有「像正片」的分片（把 tiktokcdn 那种广告图排除掉） */
+function bjHasRealSegment(text) {
+    const lines = String(text == null ? '' : text).split('\n')
+    for (let i = 0; i < lines.length; i++) {
+        const l = lines[i].trim()
+        if (!l || l.charAt(0) === '#') continue
+        if (l.indexOf('tiktokcdn') !== -1) continue
+        if (/\.(image|jpg|jpeg|png|gif|webp)(\?|$)/i.test(l)) continue
+        return true
+    }
+    return false
+}
+
+/**
+ * 播放页 → links 里的直链候选。
+ * 顺序 hls3 → hls2；**不返回 hls4**（实测是纯广告流）。
+ * @returns {string[]}
+ */
+function bjPlayerLinks(html, playerUrl) {
+    const plain = bjUnfoldPacker(html) || String(html == null ? '' : html)
+    const m = plain.match(/links\s*=\s*(\{[\s\S]{0,4000}?\})\s*;/)
+    if (!m) return []
+    let obj = null
+    try {
+        obj = JSON.parse(m[1])
+    } catch (e) {
+        return []
+    }
+    const hostM = String(playerUrl == null ? '' : playerUrl).match(/^(https?:\/\/[^/]+)/)
+    const host = hostM ? hostM[1] : ''
+    const order = ['hls3', 'hls2']
+    const out = []
+    for (let i = 0; i < order.length; i++) {
+        const v = obj[order[i]]
+        if (!v) continue
+        const sv = String(v)
+        const u = sv.indexOf('http') === 0 ? sv : host + sv
+        if (u && out.indexOf(u) === -1) out.push(u)
+    }
+    return out
+}
+
+/** 嗅探兜底用：把播放页 URL 去重拉平 */
+function bjTargetUrls(targets) {
+    const out = []
+    for (let i = 0; i < targets.length; i++) {
+        if (targets[i] && targets[i].url && out.indexOf(targets[i].url) === -1) out.push(targets[i].url)
+    }
+    return out
+}
+
 /** `P0DT1H52M0S` → `01:52:00`（只用于介绍文案） */
 function bjIsoDurationToClock(iso) {
     const m = String(iso || '').match(/^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i)
@@ -527,10 +746,12 @@ class bestjavClass extends WebApiBase {
             const raw = String((args && args.url) || '').trim()
             let streamUrl = ''
             let reason = '' // B1：解析卡在哪一步，失败时一并告诉用户
+            let sniff = [] // v4：解不出直链时，交给 App 的网页嗅探兜底
             if (raw.indexOf('raw_page@@') === 0) {
                 const rs = await this.resolveStream(raw.slice('raw_page@@'.length))
                 streamUrl = rs.url
                 reason = rs.reason
+                sniff = rs.sniff || []
             } else if (
                 raw.indexOf('http') === 0 &&
                 (raw.indexOf('.m3u8') !== -1 || raw.indexOf('videplay') !== -1 || raw.indexOf('.mp4') !== -1)
@@ -540,6 +761,7 @@ class bestjavClass extends WebApiBase {
                 const rs = await this.resolveStream(raw)
                 streamUrl = rs.url
                 reason = rs.reason
+                sniff = rs.sniff || []
             }
 
             if (streamUrl && streamUrl.indexOf('master.m3u8') !== -1) {
@@ -559,6 +781,24 @@ class bestjavClass extends WebApiBase {
             }
 
             if (!streamUrl) {
+                // v4：站点一改版我们就未必跟得上，能把播放页交给 App 的网页嗅探时优先走嗅探
+                // （App 在真 WebView 里跑站点自己的 JS，比我们在扩展里硬解抗改版）
+                if (sniff.length) {
+                    backData.sniffer = { url: sniff[0], ua: bjUa, timeOut: 30, retry: 2 }
+                    for (let i = 0; i < sniff.length; i++) {
+                        backData.urls.push({
+                            name: '嗅探线路' + (i + 1),
+                            url: sniff[i],
+                            headers: headers,
+                            isSniffer: true,
+                            snifferUA: bjUa,
+                            timeOut: 30,
+                            retry: 2,
+                            priority: i,
+                        })
+                    }
+                    return JSON.stringify(backData)
+                }
                 // A1：原版这里会返回 parse=1 + 内部标识；uz 没有 parse 语义，改为报错
                 // B1：把卡住的原因一起说出来（网络阻断 / 人机验证 / 解密失败 …）
                 backData.error = reason ? '解析播放地址失败：' + reason : '解析播放地址失败，请稍后重试或换一部影片'
@@ -830,7 +1070,30 @@ class bestjavClass extends WebApiBase {
 
         const m3b = embHtml.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/)
         if (m3b) return { url: m3b[1], reason: '' }
-        return { url: '', reason: '播放页里没有 m3u8 地址（站点结构可能变了）' }
+
+        // v4：旧 pox/dp 已经下线 → 走站点的新方案（mvarr → 播放页 → packer → links）
+        const targets = bjResolveMvarrTargets(embHtml)
+        if (targets.length) {
+            for (let i = 0; i < targets.length; i++) {
+                const pr = await this.get(targets[i].url, embed)
+                if (pr.code !== 200 || !pr.text) continue
+                const cands = bjPlayerLinks(pr.text, targets[i].url)
+                for (let j = 0; j < cands.length; j++) {
+                    const ok = await this.pickPlayable(cands[j])
+                    if (ok) return { url: ok, reason: '', sniff: bjTargetUrls(targets) }
+                }
+            }
+            return {
+                url: '',
+                reason: '站点换成 videplay 新方案了，几条线路都没解析出正片地址',
+                sniff: bjTargetUrls(targets),
+            }
+        }
+        return {
+            url: '',
+            reason: '播放页里没有 m3u8 地址（站点结构可能变了）',
+            sniff: embed ? [embed] : [],
+        }
     }
 
     /** 原 py _extract_embed_url */
@@ -881,6 +1144,49 @@ class bestjavClass extends WebApiBase {
             }
         }
         return bestU || masterUrl
+    }
+
+    /**
+     * v4：候选清单 → 真正可播的直链。
+     *
+     * 与 preferMediaPlaylist 的区别：**这里会验内容**。
+     * 站点的 links.hls4 是一份格式完全合法、响应也快的 m3u8，但分片全是广告图；
+     * 只看状态码/格式会全绿放行，真机从片头一直放广告。所以：
+     *   · 先拉候选清单，不是 #EXTM3U 直接判为不可用
+     *   · 媒体清单（有 #EXTINF）→ 检查有没有正片分片
+     *   · master 清单 → 用**第一个** variant 探一次内容；干净就把**带宽最高**的 variant 交出去
+     * @param {string} masterUrl 候选清单地址
+     * @returns {Promise<string>} 不可用返回空串
+     */
+    async pickPlayable(masterUrl) {
+        const res = await this.get(masterUrl, bjSite + '/')
+        const text = res.text || ''
+        if (res.code !== 200 || text.indexOf('#EXTM3U') === -1) return ''
+
+        const lines = text.split('\n')
+        const base = masterUrl.slice(0, masterUrl.lastIndexOf('/') + 1)
+        const variants = []
+        let best = ''
+        let bestBw = -1
+        for (let i = 0; i < lines.length; i++) {
+            const l = lines[i].trim()
+            if (!l || l.charAt(0) === '#') continue
+            const abs = l.indexOf('http') === 0 ? l : base + l
+            variants.push(abs)
+            const bm = String(lines[i - 1] || '').match(/BANDWIDTH=(\d+)/)
+            const bw = bm ? parseInt(bm[1], 10) : 0
+            if (bw >= bestBw) {
+                bestBw = bw
+                best = abs
+            }
+        }
+        if (!variants.length) {
+            // 本身就是媒体清单
+            return bjHasRealSegment(text) ? masterUrl : ''
+        }
+        const probe = await this.get(variants[0], bjSite + '/')
+        if (probe.code !== 200 || !bjHasRealSegment(probe.text || '')) return ''
+        return best || variants[0]
     }
 
     //MARK: - 内部：网络
