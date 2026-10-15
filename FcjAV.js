@@ -1,5 +1,5 @@
 // ignore
-//@name:FCJAV
+//@name:FCJAV（挂梯）
 //@webSite:https://fcjav.com
 //@version:1
 //@remark:FCJAV（fcjav.com）TVBox py 源移植，16 个分类 + 站内搜索 + 分页。播放链路比原版深了两层，已按实测重写：详情页取 filmId/__pt/__pk → POST /ajax/player 拿 player_enc → base64+XOR(pk) 解出播放器 iframe → iframe 里的 data-api（f4stream v2 播放器，原版找的 var urlPlay 已不存在）→ GET /api/play/<id>?ab=0&ad=0&n=1 换播放地址。三条实测结论都写进了实现：① 这条链路上「ab/ad/r 参数缺一个就 403」；② n=1 才是给原生播放器（无 MSE）的开放链接，不加 n 时 /v/<token> 会因缺 Origin 被 403；③ 换来的 /v/<token> 只活 300 秒（实测 T+300s 变 410 Playback link expired），而 pt 疑似一次性（响应里带 next_pt/next_pk），故播放标识只存必要的几个字段、播放时现走链路，绝不存会过期的地址。v1。

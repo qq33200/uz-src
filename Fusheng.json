@@ -1,6 +1,6 @@
 [
   {
-    "name": "浮生影院",
+    "name": "浮生影院（挂梯）",
     "version": 1,
     "remark": "浮生影院（tv.fushengr.cc）TVBox py 源移植。12 个一级分类（每类带细分子频道筛选）+ 站内搜索；详情页从 window.__ARCHIVE_PLAYER__ 取正片路径、从 var cdn_lines 取多线路。按实测做的三处修正：① 站点分类页其实没有分页（?page=N 与 /page/N/ 返回的完全是同一批内容，后者甚至 404），原版照着「翻页」写会无限翻同一页，故每类只给一页；② 原版硬编码的兜底线路 d32bg2g0w9aqg4.cloudfront.net 已死（连接直接失败），已换成实测可用的 vsdsq.tjacq.com；③ 站点 cdn_lines 里第二条线的地址本身是坏的（https:/dfdf.tjacq.com，少一个斜杠），已过滤，避免点开必失败。播放直链实测为静态地址（两次取详情完全一致），故详情直接给直链，播放时先探一次、挂了再回详情重取。v1。",
     "webSite": "https://tv.fushengr.cc",

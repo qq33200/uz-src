@@ -1,5 +1,5 @@
 // ignore
-//@name:[禁] 蝴蝶影院
+//@name:[禁] 蝴蝶影院（挂梯）
 //@version:1
 //@webSite:https://ptt01.com
 //@remark:PTT01 系列站，带动态域名自愈，支持类型/地区/年份筛选。停用可在源列表里删掉。
