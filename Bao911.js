@@ -1,8 +1,8 @@
 // ignore
 //@name:911爆料（挂梯）
 //@webSite:https://catch.belwfufv.cc
-//@version:1
-//@remark:911爆料网（catch.belwfufv.cc）TVBox py 源移植。23 个吃瓜/爆料分类 + 站内搜索 + 分页；详情页从播放器 data-config 里取正片 HLS 直链。原版重度依赖 TVBox 的 localProxy + AES 解密来代理封面，uz 没有这套机制，故：① 列表页**不出封面**（实测该站封面全部是 AES 加密图、单张约 155KB、30 张 base64 后要 6MB，塞进列表会拖垮加载，且站点没有任何缩略图/明文路径可选、query 参数也被忽略），标题信息量足够，列表因此只发 1 个请求、秒开；② 详情页会**现拉现解**那一张封面（uz 官方支持 data:image base64 封面，实测解密结果就是合法 JPEG）。域名池会波动（同一批 7 个域名，一次实测 3 个活、隔一会儿 6 个活），故按顺序自愈。正片直链实测是「每次重签发但长期有效」的形态（同一把地址 10 分钟后仍可用），故详情直接给直链、播放时挂了再回详情重取。v1。
+//@version:2
+//@remark:911爆料网（catch.belwfufv.cc）TVBox py 源移植。23 个吃瓜/爆料分类 + 站内搜索 + 分页；详情页从播放器 data-config 里取正片 HLS 直链。原版重度依赖 TVBox 的 localProxy + AES 解密来代理封面，uz 没有这套机制，故：① 列表页**不出封面**（实测该站封面全部是 AES 加密图、单张约 155KB、30 张 base64 后要 6MB，塞进列表会拖垮加载，且站点没有任何缩略图/明文路径可选、query 参数也被忽略），标题信息量足够，列表因此只发 1 个请求、秒开；② 详情页会**现拉现解**那一张封面（uz 官方支持 data:image base64 封面，实测解密结果就是合法 JPEG）。域名池会波动（同一批 7 个域名，一次实测 3 个活、隔一会儿 6 个活），故按顺序自愈。正片直链实测是「每次重签发但长期有效」的形态（同一把地址 10 分钟后仍可用），故详情直接给直链、播放时挂了再回详情重取。v2：给取数加了网络层重试（3 次 / 退避 300ms、600ms；域名池轮询时压到 1 次，避免 7 个域名 × 3 次把请求量放大）——实测这类站点的单次请求会偶发 RST/TLS 抖动，而本源此前一次抖动就整页失败，GetAV / 蝴蝶影院 / CartoonPorno / Lmm 等同族老源都带这一层，这里补齐。v1（初版）。
 //@order: M
 //@codeID:
 //@env:
@@ -68,6 +68,37 @@ const b9AesKey = 'f5d965df75336270'
 const b9AesIv = '97b60394abc2fbe1'
 
 const b9Timeout = 15000
+
+/**
+ * 网络层重试：站点/链路偶发 RST、TLS 抖动时重试，避免「一次抖动 = 整页失败」。
+ * 依据：本机同时对同一地址连打 20 次会偶发失败；所有同族老源
+ * （GetAV / 蝴蝶影院 / CartoonPorno / Lmm）都带这一层，这里补齐。
+ * 只对「网络层失败 / 5xx / 408 / 429 / 空响应」重试，明确的 4xx 直接返回不浪费请求。
+ */
+const b9Tries = 3
+
+function b9Retryable(r) {
+    if (!r) {
+        return true
+    }
+    if (r.error) {
+        return true
+    }
+    const c = r.code
+    if (c === 0 || c < 0 || c === 408 || c === 429 || c >= 500) {
+        return true
+    }
+    if (c >= 400 && c < 500) {
+        return false
+    }
+    return !r.text
+}
+
+function b9Sleep(ms) {
+    return new Promise(function (resolve) {
+        setTimeout(resolve, ms)
+    })
+}
 
 /** 列表页广告位标题（原版 AD_KEYWORDS 的精简版） */
 const b9AdTitles = [
@@ -173,17 +204,30 @@ function b9Ok(p) {
 
 async function b9Req(url, opts) {
     const o = opts || {}
-    try {
-        const p = await req(url, {
-            headers: b9Headers(o.headers),
-            sendTimeout: o.timeout || b9Timeout,
-            receiveTimeout: o.timeout || b9Timeout,
-            responseType: o.responseType,
-        })
-        return { ok: b9Ok(p), code: (p && p.code) || 0, text: b9Text(p), raw: p, error: (p && p.error) || '' }
-    } catch (e) {
-        return { ok: false, code: -1, text: '', raw: null, error: '请求异常：' + b9ErrText(e) }
+    // 域名池轮询时把 tries 压到 1：外层本来就会换下一个域名，不必在同一域名上重试
+    const tries = o.tries && o.tries > 0 ? o.tries : b9Tries
+    let last = { ok: false, code: 0, text: '', raw: null, error: '未请求' }
+    for (let attempt = 1; attempt <= tries; attempt++) {
+        try {
+            const p = await req(url, {
+                headers: b9Headers(o.headers),
+                sendTimeout: o.timeout || b9Timeout,
+                receiveTimeout: o.timeout || b9Timeout,
+                responseType: o.responseType,
+            })
+            last = { ok: b9Ok(p), code: (p && p.code) || 0, text: b9Text(p), raw: p, error: (p && p.error) || '' }
+        } catch (e) {
+            last = { ok: false, code: -1, text: '', raw: null, error: '请求异常：' + b9ErrText(e) }
+        }
+        if (last.ok && last.text) {
+            return last
+        }
+        if (attempt >= tries || !b9Retryable(last)) {
+            return last
+        }
+        await b9Sleep(300 * attempt)
     }
+    return last
 }
 
 /**
@@ -204,7 +248,10 @@ async function b9Page(path, referer) {
     for (let i = 0; i < hosts.length; i++) {
         const host = hosts[i].replace(/\/+$/, '')
         const url = path.charAt(0) === '/' ? host + path : host + '/' + path
-        const r = await b9Req(url, { headers: { Referer: referer || host + '/' } })
+        const r = await b9Req(url, {
+            headers: { Referer: referer || host + '/' },
+            tries: i === 0 ? b9Tries : 1,
+        })
         if (r.ok && r.text && r.text.indexOf('/archives/') !== -1) {
             b9Healed = host
             return r

@@ -1,8 +1,8 @@
 // ignore
 //@name:FCJAV（挂梯）
 //@webSite:https://fcjav.com
-//@version:1
-//@remark:FCJAV（fcjav.com）TVBox py 源移植，16 个分类 + 站内搜索 + 分页。播放链路比原版深了两层，已按实测重写：详情页取 filmId/__pt/__pk → POST /ajax/player 拿 player_enc → base64+XOR(pk) 解出播放器 iframe → iframe 里的 data-api（f4stream v2 播放器，原版找的 var urlPlay 已不存在）→ GET /api/play/<id>?ab=0&ad=0&n=1 换播放地址。三条实测结论都写进了实现：① 这条链路上「ab/ad/r 参数缺一个就 403」；② n=1 才是给原生播放器（无 MSE）的开放链接，不加 n 时 /v/<token> 会因缺 Origin 被 403；③ 换来的 /v/<token> 只活 300 秒（实测 T+300s 变 410 Playback link expired），而 pt 疑似一次性（响应里带 next_pt/next_pk），故播放标识只存必要的几个字段、播放时现走链路，绝不存会过期的地址。v1。
+//@version:2
+//@remark:FCJAV（fcjav.com）TVBox py 源移植，16 个分类 + 站内搜索 + 分页。播放链路比原版深了两层，已按实测重写：详情页取 filmId/__pt/__pk → POST /ajax/player 拿 player_enc → base64+XOR(pk) 解出播放器 iframe → iframe 里的 data-api（f4stream v2 播放器，原版找的 var urlPlay 已不存在）→ GET /api/play/<id>?ab=0&ad=0&n=1 换播放地址。三条实测结论都写进了实现：① 这条链路上「ab/ad/r 参数缺一个就 403」；② n=1 才是给原生播放器（无 MSE）的开放链接，不加 n 时 /v/<token> 会因缺 Origin 被 403；③ 换来的 /v/<token> 只活 300 秒（实测 T+300s 变 410 Playback link expired），而 pt 疑似一次性（响应里带 next_pt/next_pk），故播放标识只存必要的几个字段、播放时现走链路，绝不存会过期的地址。v2：给取数加了网络层重试（3 次 / 退避 300ms、600ms）——实测同一地址连打 20 次会偶发 1 次 TLS 抖动（EPROTO），而本源此前一次抖动就整页报「列表获取失败」，多个同类老源都带这一层，这里补齐。v1（初版）。
 //@order: K
 //@codeID:
 //@env:
@@ -61,6 +61,37 @@ const fjTimeout = 15000
 
 /** 站点筛选走的路径与别的分类不同的两个 */
 const fjGenreTids = ['uncensored-leaked', 'reducing-mosaic']
+
+/**
+ * 网络层重试：站点/链路偶发 RST、TLS 抖动时重试，避免「一次抖动 = 整页失败」。
+ * 依据：本机同时对同一地址连打 20 次，实测 19/20（1 次 EPROTO）；
+ * 所有同族老源（GetAV / 蝴蝶影院 / CartoonPorno / Lmm）都带这一层，这里补齐。
+ * 只对「网络层失败 / 5xx / 408 / 429 / 空响应」重试，明确的 4xx 直接返回不浪费请求。
+ */
+const fjTries = 3
+
+function fjRetryable(r) {
+    if (!r) {
+        return true
+    }
+    if (r.error) {
+        return true
+    }
+    const c = r.code
+    if (c === 0 || c < 0 || c === 408 || c === 429 || c >= 500) {
+        return true
+    }
+    if (c >= 400 && c < 500) {
+        return false
+    }
+    return !r.text
+}
+
+function fjSleep(ms) {
+    return new Promise(function (resolve) {
+        setTimeout(resolve, ms)
+    })
+}
 
 //MARK: - 小工具
 
@@ -151,16 +182,27 @@ function fjOk(p) {
 
 async function fjGet(url, extraHeaders, opts) {
     const o = opts || {}
-    try {
-        const p = await req(url, {
-            headers: fjHeaders(extraHeaders, o.ua),
-            sendTimeout: o.timeout || fjTimeout,
-            receiveTimeout: o.timeout || fjTimeout,
-        })
-        return { ok: fjOk(p), code: (p && p.code) || 0, text: fjText(p), error: (p && p.error) || '' }
-    } catch (e) {
-        return { ok: false, code: -1, text: '', error: '请求异常：' + fjErrText(e) }
+    let last = { ok: false, code: 0, text: '', error: '未请求' }
+    for (let attempt = 1; attempt <= fjTries; attempt++) {
+        try {
+            const p = await req(url, {
+                headers: fjHeaders(extraHeaders, o.ua),
+                sendTimeout: o.timeout || fjTimeout,
+                receiveTimeout: o.timeout || fjTimeout,
+            })
+            last = { ok: fjOk(p), code: (p && p.code) || 0, text: fjText(p), error: (p && p.error) || '' }
+        } catch (e) {
+            last = { ok: false, code: -1, text: '', error: '请求异常：' + fjErrText(e) }
+        }
+        if (last.ok && last.text) {
+            return last
+        }
+        if (attempt >= fjTries || !fjRetryable(last)) {
+            return last
+        }
+        await fjSleep(300 * attempt)
     }
+    return last
 }
 
 /**
@@ -168,23 +210,34 @@ async function fjGet(url, extraHeaders, opts) {
  * 官方 Zhi_qiyou.js 就是这么发的），服务端读的是 $_POST。
  */
 async function fjPost(url, body, referer) {
-    try {
-        const p = await req(url, {
-            method: 'post',
-            headers: {
-                'User-Agent': appConfig.ua,
-                Referer: referer || appConfig.webSite + '/',
-                'X-Requested-With': 'XMLHttpRequest',
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            },
-            data: body,
-            sendTimeout: fjTimeout,
-            receiveTimeout: fjTimeout,
-        })
-        return { ok: fjOk(p), code: (p && p.code) || 0, text: fjText(p), raw: p, error: (p && p.error) || '' }
-    } catch (e) {
-        return { ok: false, code: -1, text: '', raw: null, error: '请求异常：' + fjErrText(e) }
+    let last = { ok: false, code: 0, text: '', raw: null, error: '未请求' }
+    for (let attempt = 1; attempt <= fjTries; attempt++) {
+        try {
+            const p = await req(url, {
+                method: 'post',
+                headers: {
+                    'User-Agent': appConfig.ua,
+                    Referer: referer || appConfig.webSite + '/',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                },
+                data: body,
+                sendTimeout: fjTimeout,
+                receiveTimeout: fjTimeout,
+            })
+            last = { ok: fjOk(p), code: (p && p.code) || 0, text: fjText(p), raw: p, error: (p && p.error) || '' }
+        } catch (e) {
+            last = { ok: false, code: -1, text: '', raw: null, error: '请求异常：' + fjErrText(e) }
+        }
+        if (last.ok && last.text) {
+            return last
+        }
+        if (attempt >= fjTries || !fjRetryable(last)) {
+            return last
+        }
+        await fjSleep(300 * attempt)
     }
+    return last
 }
 
 /** base64 → 字节数组（手写，不依赖 atob） */

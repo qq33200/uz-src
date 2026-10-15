@@ -1,8 +1,8 @@
 // ignore
 //@name:浮生影院（挂梯）
 //@webSite:https://tv.fushengr.cc
-//@version:1
-//@remark:浮生影院（tv.fushengr.cc）TVBox py 源移植。12 个一级分类（每类带细分子频道筛选）+ 站内搜索；详情页从 window.__ARCHIVE_PLAYER__ 取正片路径、从 var cdn_lines 取多线路。按实测做的三处修正：① 站点分类页其实没有分页（?page=N 与 /page/N/ 返回的完全是同一批内容，后者甚至 404），原版照着「翻页」写会无限翻同一页，故每类只给一页；② 原版硬编码的兜底线路 d32bg2g0w9aqg4.cloudfront.net 已死（连接直接失败），已换成实测可用的 vsdsq.tjacq.com；③ 站点 cdn_lines 里第二条线的地址本身是坏的（https:/dfdf.tjacq.com，少一个斜杠），已过滤，避免点开必失败。播放直链实测为静态地址（两次取详情完全一致），故详情直接给直链，播放时先探一次、挂了再回详情重取。v1。
+//@version:2
+//@remark:浮生影院（tv.fushengr.cc）TVBox py 源移植。12 个一级分类（每类带细分子频道筛选）+ 站内搜索；详情页从 window.__ARCHIVE_PLAYER__ 取正片路径、从 var cdn_lines 取多线路。按实测做的三处修正：① 站点分类页其实没有分页（?page=N 与 /page/N/ 返回的完全是同一批内容，后者甚至 404），原版照着「翻页」写会无限翻同一页，故每类只给一页；② 原版硬编码的兜底线路 d32bg2g0w9aqg4.cloudfront.net 已死（连接直接失败），已换成实测可用的 vsdsq.tjacq.com；③ 站点 cdn_lines 里第二条线的地址本身是坏的（https:/dfdf.tjacq.com，少一个斜杠），已过滤，避免点开必失败。播放直链实测为静态地址（两次取详情完全一致），故详情直接给直链，播放时先探一次、挂了再回详情重取。v2：给取数加了网络层重试（3 次 / 退避 300ms、600ms）——实测这类站点的单次请求会偶发 RST/TLS 抖动，本源此前一次抖动就整页报「列表获取失败」，而 GetAV / 蝴蝶影院 / CartoonPorno / Lmm 等同族老源都带这一层，这里补齐。v1（初版）。
 //@order: L
 //@codeID:
 //@env:
@@ -62,6 +62,37 @@ const fsPublishUrl = 'https://madou2025.com'
 const fsFallbackLines = [['播放线路01', 'https://vsdsq.tjacq.com']]
 
 const fsTimeout = 15000
+
+/**
+ * 网络层重试：站点/链路偶发 RST、TLS 抖动时重试，避免「一次抖动 = 整页失败」。
+ * 依据：本机同时对同一地址连打 20 次会偶发失败；所有同族老源
+ * （GetAV / 蝴蝶影院 / CartoonPorno / Lmm）都带这一层，这里补齐。
+ * 只对「网络层失败 / 5xx / 408 / 429 / 空响应」重试，明确的 4xx 直接返回不浪费请求。
+ */
+const fsTries = 3
+
+function fsRetryable(r) {
+    if (!r) {
+        return true
+    }
+    if (r.error) {
+        return true
+    }
+    const c = r.code
+    if (c === 0 || c < 0 || c === 408 || c === 429 || c >= 500) {
+        return true
+    }
+    if (c >= 400 && c < 500) {
+        return false
+    }
+    return !r.text
+}
+
+function fsSleep(ms) {
+    return new Promise(function (resolve) {
+        setTimeout(resolve, ms)
+    })
+}
 
 let fsHealedHost = ''
 
@@ -163,6 +194,21 @@ function fsHeaders(extra) {
 /** 判成功只看 code —— 不用 error 判（实测成功时 error 也可能有值） */
 async function fsFetch(url, referer, opts) {
     const o = opts || {}
+    let last = { ok: false, code: 0, text: '', error: '未请求' }
+    for (let attempt = 1; attempt <= fsTries; attempt++) {
+        last = await fsFetchOnce(url, referer, o)
+        if (last.ok && last.text) {
+            return last
+        }
+        if (attempt >= fsTries || !fsRetryable(last)) {
+            return last
+        }
+        await fsSleep(300 * attempt)
+    }
+    return last
+}
+
+async function fsFetchOnce(url, referer, o) {
     const options = {
         headers: fsHeaders({ Referer: referer || fsSite() + '/' }),
         sendTimeout: o.timeout || fsTimeout,
