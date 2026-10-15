@@ -88,24 +88,6 @@
       "type": 101
     },
     {
-      "name": "蝴蝶·成人卡通（挂梯）",
-      "version": 1,
-      "remark": "CartoonPorno（cartoonporno.cc）TVBox py 源移植。7 个一级分类 + 排序/746 个分类筛选面板 + 站内搜索；详情页直接给出正片直链。两处按实测做的加固：① 修正原版卡片解析的错位 bug（原版按 img[data-vid] 切块，把 a[title] 甩到前一块，导致 vid 与标题/详情路径错开一格、点进去是别的片）；② 播放直链实测约 1/3 概率随机 403（服务端多节点抖动，同一地址重试即可，重取详情换签名反而更差 67%→58%），故播放时并行预检 3 路，成功率 67%→97%。播放头必须带 Referer（不带的话服务端只回一个 10 秒的提示流 tip.ts）。原版的域名自愈源头（x99dh.* 导航站）已失效（现全 500 或跳广告页），故以 cartoonporno.cc 为主域名并保留自愈兜底。v1。",
-      "webSite": "https://www.cartoonporno.cc",
-      "order": "J",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@65d4b98c173650b04f012794f50bd5754e959cfc/CartoonPorno.js",
-      "type": 101
-    },
-    {
-      "name": "FCJAV（挂梯）",
-      "version": 2,
-      "remark": "FCJAV（fcjav.com）TVBox py 源移植，16 个分类 + 站内搜索 + 分页。播放链路比原版深了两层，已按实测重写：详情页取 filmId/__pt/__pk → POST /ajax/player 拿 player_enc → base64+XOR(pk) 解出播放器 iframe → iframe 里的 data-api（f4stream v2 播放器，原版找的 var urlPlay 已不存在）→ GET /api/play/<id>?ab=0&ad=0&n=1 换播放地址。三条实测结论都写进了实现：① 这条链路上「ab/ad/r 参数缺一个就 403」；② n=1 才是给原生播放器（无 MSE）的开放链接，不加 n 时 /v/<token> 会因缺 Origin 被 403；③ 换来的 /v/<token> 只活 300 秒（实测 T+300s 变 410 Playback link expired），而 pt 疑似一次性（响应里带 next_pt/next_pk），故播放标识只存必要的几个字段、播放时现走链路，绝不存会过期的地址。v2：给取数加了网络层重试（3 次 / 退避 300ms、600ms）——实测同一地址连打 20 次会偶发 1 次 TLS 抖动（EPROTO），而本源此前一次抖动就整页报「列表获取失败」，多个同类老源都带这一层，这里补齐。v1（初版）。",
-      "webSite": "https://fcjav.com",
-      "order": "K",
-      "api": "https://cdn.jsdelivr.net/gh/qq33200/uz-src@efecc976d1f9ede9e60e4a723e8f88f3448da0c1/FcjAV.js",
-      "type": 101
-    },
-    {
       "name": "浮生影院（挂梯）",
       "version": 2,
       "remark": "浮生影院（tv.fushengr.cc）TVBox py 源移植。12 个一级分类（每类带细分子频道筛选）+ 站内搜索；详情页从 window.__ARCHIVE_PLAYER__ 取正片路径、从 var cdn_lines 取多线路。按实测做的三处修正：① 站点分类页其实没有分页（?page=N 与 /page/N/ 返回的完全是同一批内容，后者甚至 404），原版照着「翻页」写会无限翻同一页，故每类只给一页；② 原版硬编码的兜底线路 d32bg2g0w9aqg4.cloudfront.net 已死（连接直接失败），已换成实测可用的 vsdsq.tjacq.com；③ 站点 cdn_lines 里第二条线的地址本身是坏的（https:/dfdf.tjacq.com，少一个斜杠），已过滤，避免点开必失败。播放直链实测为静态地址（两次取详情完全一致），故详情直接给直链，播放时先探一次、挂了再回详情重取。v2：给取数加了网络层重试（3 次 / 退避 300ms、600ms）——实测这类站点的单次请求会偶发 RST/TLS 抖动，本源此前一次抖动就整页报「列表获取失败」，而 GetAV / 蝴蝶影院 / CartoonPorno / Lmm 等同族老源都带这一层，这里补齐。v1（初版）。",
